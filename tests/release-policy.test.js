@@ -126,5 +126,5 @@ test('README and website expose the current fork release endpoints', () => {
   assert.match(websiteContent, /DOWNLOAD_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
   assert.match(websiteContent, /GITHUB_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel"/);
   assert.match(websiteDownload, /LATEST_RELEASE_API_URL\s*=\s*"https:\/\/api\.github\.com\/repos\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
-  assert.match(websiteLayout, /metadataBase:\s*new URL\("https:\/\/simple-alone\.github\.io\/TO-DO-Panel\/"\)/);
+  assert.match(websiteLayout, /metadataBase:\s*new URL\("https:\/\/simple-alone\.github\.io\/"\)/);
 });
