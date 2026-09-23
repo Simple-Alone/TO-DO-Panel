@@ -8,7 +8,7 @@
 
 1. `package.json`、`package-lock.json` 版本一致；CHANGELOG、README 稳定版本、`docs/release-notes.md` 对齐。
 2. 桌面端 `npm test`；官网 `npm test && npm run lint && npm run build`。
-3. `Release macOS and Windows` 工作流的手动运行只验证并上传 Actions artifacts；不创建 Release。开发分支 `feat/windows-support` 推送也执行同样验证。
+3. `main` 推送和 `Release macOS and Windows` 工作流的手动运行只验证并上传 Actions artifacts，不创建 Release。
 4. Windows runner 运行 `npm run build:win`，随后 `scripts/verify-windows.ps1` 安装实际 EXE、启动真实程序、验证核心 IPC/数据/系统加密/快捷键/模拟相机与录音释放，重新安装检查数据，再卸载。
 5. Mac runner 运行 `npm run build`、codesign 与 hdiutil 校验。两者全部通过才允许发布。
 6. 不提交 node_modules、dist、密码、API Key、录音、剪贴板或测试用户数据。

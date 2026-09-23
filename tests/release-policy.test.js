@@ -10,8 +10,11 @@ const releasePolicyScript = path.join(projectRoot, 'scripts', 'release-policy.js
 const releaseWorkflowPath = path.join(projectRoot, '.github', 'workflows', 'release-dmg.yml');
 const entitlementsPath = path.join(projectRoot, 'build', 'entitlements.mac.plist');
 const readmePath = path.join(projectRoot, 'README.md');
+const changelogPath = path.join(projectRoot, 'CHANGELOG.md');
+const releaseNotesPath = path.join(projectRoot, 'docs', 'release-notes.md');
 const websiteDownloadPath = path.join(projectRoot, 'website', 'app', 'landingDownload.mjs');
 const websiteContentPath = path.join(projectRoot, 'website', 'app', 'landingContent.ts');
+const websiteLayoutPath = path.join(projectRoot, 'website', 'app', 'layout.tsx');
 const packageVersion = require(path.join(projectRoot, 'package.json')).version;
 const packageConfig = require(path.join(projectRoot, 'package.json'));
 
@@ -101,16 +104,27 @@ test('macOS packaging declares the Electron 44 minimum and least-privilege runti
   assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/);
 });
 
-test('README requires local source builds while website release endpoints stay aligned', () => {
+test('README and website expose the current fork release endpoints', () => {
   const readme = fs.readFileSync(readmePath, 'utf8');
+  const changelog = fs.readFileSync(changelogPath, 'utf8');
+  const releaseNotes = fs.readFileSync(releaseNotesPath, 'utf8');
   const websiteDownload = fs.readFileSync(websiteDownloadPath, 'utf8');
   const websiteContent = fs.readFileSync(websiteContentPath, 'utf8');
+  const websiteLayout = fs.readFileSync(websiteLayoutPath, 'utf8');
+  const versionPattern = packageVersion.replaceAll('.', '\\.');
 
-  assert.match(readme, /不提供 DMG、EXE 或其他预编译安装包/);
-  assert.match(readme, /git clone https:\/\/github\.com\/Mr-ChenH\/TO-DO-Panel\.git/);
+  assert.match(readme, new RegExp(`当前稳定版本为 \\*\\*${versionPattern}\\*\\*`));
+  assert.match(readme, new RegExp(`releases/latest/download/Dynamic-Panel-${versionPattern}-arm64\\.dmg`));
+  assert.match(readme, new RegExp(`releases/latest/download/Dynamic-Panel-${versionPattern}-windows-x64-setup\\.exe`));
+  assert.match(readme, /git clone https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel\.git/);
   assert.match(readme, /`npm run build` \| 在 macOS 生成 Apple Silicon DMG/);
   assert.match(readme, /`npm run build:win` \| 在 Windows 生成 x64 NSIS 安装包/);
-  assert.doesNotMatch(readme, /releases\/latest|下载 macOS|下载 Windows|当前稳定版本/);
-  assert.match(websiteContent, /DOWNLOAD_URL\s*=\s*"https:\/\/github\.com\/xiaopu-ai\/TO-DO-Panel\/releases\/latest"/);
-  assert.match(websiteDownload, /LATEST_RELEASE_API_URL\s*=\s*"https:\/\/api\.github\.com\/repos\/xiaopu-ai\/TO-DO-Panel\/releases\/latest"/);
+  assert.match(changelog, new RegExp(`^## \\[${versionPattern}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
+  assert.match(releaseNotes, new RegExp(`^## ${versionPattern}$`, 'm'));
+  assert.match(releaseNotes, new RegExp(`releases/download/v${versionPattern}/Dynamic-Panel-${versionPattern}-arm64\\.dmg`));
+  assert.match(releaseNotes, new RegExp(`releases/download/v${versionPattern}/Dynamic-Panel-${versionPattern}-windows-x64-setup\\.exe`));
+  assert.match(websiteContent, /DOWNLOAD_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
+  assert.match(websiteContent, /GITHUB_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel"/);
+  assert.match(websiteDownload, /LATEST_RELEASE_API_URL\s*=\s*"https:\/\/api\.github\.com\/repos\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
+  assert.match(websiteLayout, /metadataBase:\s*new URL\("https:\/\/simple-alone\.github\.io\/TO-DO-Panel\/"\)/);
 });

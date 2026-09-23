@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [1.2.0] - 2026-09-23
+
 ### 桌面
 
 - 新增可选的自托管 Sync MVP：桌面端按工作区保存独立的安全绑定、持久 outbox/inbox、游标、冲突与对象传输状态，支持 11 类 allowlist 数据、离线重试、实时失效通知、ACK 后推进游标、笔记/剪贴板/截图 PNG 续传、冲突详情与手动解决，以及带加密服务端恢复点、签名影响计划、本地恢复清单和精确确认的首次同步 `local-wins` / `server-wins`。新增独立 Node.js 22 同步服务、PostgreSQL RLS、多账号/空间/客户端 Key、严格 CSP Web 控制台、管理员 CLI、S3/文件系统对象存储、加密备份/暂存恢复、Docker/Compose 示例和真实双客户端环回验收；默认仍纯本地，剪贴板、截图、AI 会话、行情、指令、启动器与地点默认不同步。
@@ -79,7 +81,7 @@
 
 ### 官网
 
-- 下载按钮改为上下等宽排列：macOS 在上，Windows 在下；保留原按钮样式与动态下载地址。仅更新官网，桌面稳定版本仍为 1.1.0。
+- 下载按钮改为上下等宽排列：macOS 在上，Windows 在下；保留原按钮样式与动态下载地址。
 
 ## [1.1.0] - 2026-09-07
 
@@ -172,7 +174,8 @@
 
 - 首个稳定版本，建立固定命名的 Apple Silicon DMG 发布流程。
 
-[未发布]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.1.0...HEAD
+[未发布]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Simple-Alone/TO-DO-Panel/releases/tag/v1.2.0
 [1.1.0]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.7...v1.1.0
 [1.0.7]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.5...v1.0.6

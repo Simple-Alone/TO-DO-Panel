@@ -4,11 +4,13 @@
   <p><strong>贴在屏幕顶部的本地工作台</strong></p>
   <p>待办、笔记、链接、录制、行情与本机 AI，默认留在本机，也可连接自托管服务同步所选数据。</p>
   <p>
-    <a href="#源码构建"><strong>源码构建</strong></a>
+    <a href="#下载安装"><strong>下载安装</strong></a>
+    ·
+    <a href="#源码构建">源码构建</a>
     ·
     <a href="CHANGELOG.md">更新日志</a>
     ·
-    <a href="https://github.com/Mr-ChenH/TO-DO-Panel/issues">反馈问题</a>
+    <a href="https://github.com/Simple-Alone/TO-DO-Panel/issues">反馈问题</a>
   </p>
   <p>
     <img alt="macOS 13+ Apple Silicon" src="https://img.shields.io/badge/macOS-13%2B%20Apple%20Silicon-111318?style=flat-square&logo=apple" />
@@ -23,6 +25,7 @@
 ## 目录
 
 - [快速了解](#快速了解)
+- [下载安装](#下载安装)
 - [源码构建](#源码构建)
 - [核心功能](#核心功能)
 - [数据与权限](#数据与权限)
@@ -42,19 +45,32 @@ Dynamic Panel 是一个常驻屏幕顶部的 Electron 工作台：
 | 运行方式 | 本地优先桌面应用；可选连接仓库内的自托管同步服务 |
 | 默认状态 | 折叠成顶部刘海/紧凑条，点击后展开工作区 |
 | 数据位置 | LocalStorage、当前工作区目录和 Electron `userData` 目录 |
-| 获取方式 | 本仓库不提供预编译安装包，需要克隆源码后自行运行或构建 |
+| 获取方式 | 从 GitHub Releases 下载安装包，或克隆源码自行构建 |
 | 许可证 | [MIT](LICENSE) |
 
 macOS 折叠态贴合屏幕顶部，“小”档跟随菜单栏高度；Windows 使用宽 `160px` 的紧凑条。刘海高度可选择小、中、大或自定义，macOS 范围为 `24–64px`，Windows 为 `8–38px`；Windows 高度超过 `30px` 后不再执行鼠标悬停放大。展开工作区统一使用约 `1240 × 540` 的内容尺寸，窄屏和矮屏会保留安全边距。连接多块屏幕时，面板跟随当前屏幕并保持顶部居中。
 
+## 下载安装
+
+当前稳定版本为 **1.2.0**。请选择与系统匹配的安装包：
+
+| 平台 | 安装包 | 完整性校验 |
+| --- | --- | --- |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-arm64.dmg) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-arm64.dmg.sha256) |
+| Windows 10/11 · x64 | [下载安装程序](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-windows-x64-setup.exe) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-windows-x64-setup.exe.sha256) |
+
+[查看全部 GitHub Releases](https://github.com/Simple-Alone/TO-DO-Panel/releases) 。
+
+macOS 安装包采用 ad-hoc 签名且未经过 Apple 公证，Windows 安装包没有商业代码签名。首次运行可能出现系统安全提示，请只从本仓库 Release 下载，并在安装前核对 SHA-256。
+
 ## 源码构建
 
-> 当前代码与原项目已经有较大差异，本仓库不提供 DMG、EXE 或其他预编译安装包。请审阅源码后在目标平台自行运行、测试和构建。
+如需审阅代码、参与开发或自行生成安装包，可在目标平台从源码运行和构建。
 
 桌面端要求 Node.js 18+，使用 npm：
 
 ```bash
-git clone https://github.com/Mr-ChenH/TO-DO-Panel.git
+git clone https://github.com/Simple-Alone/TO-DO-Panel.git
 cd TO-DO-Panel
 npm install
 npm test
