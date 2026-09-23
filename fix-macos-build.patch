@@ -1,3 +1,14 @@
+diff --git a/.github/workflows/release-dmg.yml b/.github/workflows/release-dmg.yml
+index 7d549df..fd7c573 100644
+--- a/.github/workflows/release-dmg.yml
++++ b/.github/workflows/release-dmg.yml
+@@ -3,5 +3,5 @@ name: Release macOS and Windows
+ on:
+   workflow_dispatch:
+   push:
+-    branches: [feat/windows-support]
++    branches: [main]
+     tags: ['v*.*.*']
 diff --git a/launcher/extension-host.js b/launcher/extension-host.js
 index 4920639..5b247ec 100644
 --- a/launcher/extension-host.js
@@ -203,6 +214,16 @@ index 4367783..6d72049 100644
          return {
            opened,
            todoActivated,
+diff --git a/tests/release-policy.test.js b/tests/release-policy.test.js
+index 132d651..5609e2a 100644
+--- a/tests/release-policy.test.js
++++ b/tests/release-policy.test.js
+@@ -81,4 +81,5 @@ test('the release workflow lets manual runs verify artifacts while policy gates
+   assert.match(workflow, /^\s{2}workflow_dispatch:\s*$/m);
++  assert.match(workflow, /^\s{4}branches:\s*\[main\]\s*$/m);
+   assert.match(workflow, /id:\s*release[\s\S]*?run:\s*node scripts\/release-policy\.js/);
+   assert.match(workflow, /name:\s*Build DMG[\s\S]*?run:\s*npm run build/);
+   assert.match(workflow, /name:\s*Verify and checksum DMG/);
 diff --git a/tests/startup.electron.js b/tests/startup.electron.js
 index a3e81cc..624e0ed 100644
 --- a/tests/startup.electron.js
