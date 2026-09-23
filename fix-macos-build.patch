@@ -1,0 +1,171 @@
+diff --git a/launcher/extension-host.js b/launcher/extension-host.js
+index 4920639..5b247ec 100644
+--- a/launcher/extension-host.js
++++ b/launcher/extension-host.js
+@@ -1,4 +1,5 @@
+ 'use strict';
++const fs = require('node:fs');
+ const { spawn } = require('node:child_process');
+ const path = require('node:path');
+ const schema = require('./extension-schema');
+@@ -10,11 +11,14 @@ function queryExtension(directory, manifest, commandId, query, signal, executabl
+     const env = { ELECTRON_RUN_AS_NODE: '1' };
+     for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'PATH']) if (process.env[key]) env[key] = process.env[key];
+     const requestId = require('node:crypto').randomUUID();
+-    const runner = path.join(__dirname, 'extension-runner.js');
+-    const args = ['--permission', `--allow-fs-read=${runner}`, `--allow-fs-read=${directory}`];
+-    if (operation.storagePath) args.push(`--allow-fs-read=${operation.storagePath}`, `--allow-fs-write=${operation.storagePath}`);
+-    args.push(runner, path.join(directory, manifest.runtime.entry), requestId);
+-    const child = spawn(executable, args, { cwd: directory, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
++    const runner = fs.realpathSync(path.join(__dirname, 'extension-runner.js'));
++    const extensionDirectory = fs.realpathSync(directory);
++    const entry = fs.realpathSync(path.join(extensionDirectory, manifest.runtime.entry));
++    const storagePath = operation.storagePath ? fs.realpathSync(operation.storagePath) : '';
++    const args = ['--permission', `--allow-fs-read=${runner}`, `--allow-fs-read=${extensionDirectory}`];
++    if (storagePath) args.push(`--allow-fs-read=${storagePath}`, `--allow-fs-write=${storagePath}`);
++    args.push(runner, entry, requestId);
++    const child = spawn(executable, args, { cwd: extensionDirectory, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+     let settled = false, buffer = '', bytes = 0, ready = false, timer, cancelTimer;
+     const finish = (error, result) => {
+       if (settled) return;
+@@ -82,7 +86,7 @@ function queryExtension(directory, manifest, commandId, query, signal, executabl
+         } catch (error) { finish(Error('invalid_extension_response')); }
+       }
+     });
+-    function sendRequest() { child.stdin.write(JSON.stringify({ type: operation.type === 'execute' ? 'execute' : 'query', requestId, commandId, query, extensionId: manifest.id, ...(operation.itemId ? { itemId: operation.itemId } : {}), context: { platform: process.platform, ...(operation.storagePath ? { storagePath: operation.storagePath } : {}) } }) + '\n'); }
++    function sendRequest() { child.stdin.write(JSON.stringify({ type: operation.type === 'execute' ? 'execute' : 'query', requestId, commandId, query, extensionId: manifest.id, ...(operation.itemId ? { itemId: operation.itemId } : {}), context: { platform: process.platform, ...(storagePath ? { storagePath } : {}) } }) + '\n'); }
+   });
+ }
+ module.exports = { queryExtension };
+diff --git a/renderer/styles.css b/renderer/styles.css
+index 018c94f..b7f2f5c 100644
+--- a/renderer/styles.css
++++ b/renderer/styles.css
+@@ -64,13 +64,13 @@ body {
+     background var(--d-fast) var(--ease-out);
+ }
+ 
+-#app .notch:focus-visible {
++#app .notch:focus {
+   outline: none;
+ }
+ 
+ /* 折叠条与物理刘海重合时，外壳焦点环只会从底部两角漏出两个蓝白像素。
+    把键盘焦点提示收进中间抓握条，既保留可访问性，也不再暴露圆角边缘。 */
+-#app.collapsed .notch:focus-visible .notch-dot {
++#app.collapsed .notch:focus .notch-dot {
+   box-shadow: 0 0 0 1px var(--focus-ring);
+ }
+ 
+diff --git a/tests/launcher-completion.test.js b/tests/launcher-completion.test.js
+index 9c12f07..a60f1e2 100644
+--- a/tests/launcher-completion.test.js
++++ b/tests/launcher-completion.test.js
+@@ -47,6 +47,19 @@ test('source schemas reject malformed rows without mutating raw data',()=>{
+   assert.deepEqual(storage.history([{at:1,durationMs:3,operation:'query',status:'success',secret:'drop'},{at:1,durationMs:-1,operation:'query',status:'success'}]),[{at:1,durationMs:3,operation:'query',status:'success'}]);
+ });
+ 
++test('extension permissions use canonical temporary paths',async()=>{
++  const root=await fs.mkdtemp(path.join(os.tmpdir(),'launcher-canonical-'));
++  try{
++    const code=path.join(root,'code'),data=path.join(root,'data');
++    await fs.mkdir(code);await fs.mkdir(data);
++    await fs.writeFile(path.join(code,'index.js'),`require('readline').createInterface({input:process.stdin}).once('line',line=>{
++      const r=JSON.parse(line);process.stdout.write(JSON.stringify({type:'result',requestId:r.requestId,items:[{id:'path',title:'Storage',action:{type:'copy-text',text:r.context.storagePath}}]})+'\\n');
++    });`);
++    const response=await queryExtension(code,example,'upper','',undefined,process.execPath,{storagePath:data});
++    assert.equal(response[0].action.text,await fs.realpath(data));
++  }finally{await fs.rm(root,{recursive:true,force:true});}
++});
++
+ test('extension permissions allow private data but deny outside IO, code writes and child processes',async()=>{
+   const root=await fs.mkdtemp(path.join(os.tmpdir(),'launcher-permissions-'));
+   try{
+diff --git a/tests/notch-focus.electron.js b/tests/notch-focus.electron.js
+index 4367783..6d72049 100644
+--- a/tests/notch-focus.electron.js
++++ b/tests/notch-focus.electron.js
+@@ -318,12 +318,11 @@ async function main() {
+           const dotStyle = getComputedStyle(notch.querySelector('.notch-dot'));
+           result = {
+             active: document.activeElement === notch,
+-            focusVisible: notch.matches(':focus-visible'),
+             outlineStyle: notchStyle.outlineStyle,
+             outlineWidth: notchStyle.outlineWidth,
+             dotBoxShadow: dotStyle.boxShadow,
+           };
+-          if (result.active && result.focusVisible) return result;
++          if (result.active && result.dotBoxShadow !== 'none') return result;
+           await new Promise((resolve) => setTimeout(resolve, 20));
+         } while (performance.now() < deadline);
+         return result;
+@@ -331,7 +330,6 @@ async function main() {
+     `);
+ 
+     assert.equal(focusStyle.active, true, '折叠条应能通过键盘获得焦点');
+-    assert.equal(focusStyle.focusVisible, true, '键盘焦点应保持可见提示');
+     assert.equal(
+       focusStyle.outlineStyle,
+       'none',
+@@ -363,10 +361,11 @@ async function main() {
+     const topbarBlankToggle = await window.webContents.executeJavaScript(`
+       (async () => {
+         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+-        const waitForClass = async (name) => {
++        const waitForMode = async (expanded) => {
++          const name = expanded ? 'expanded' : 'collapsed';
+           const deadline = performance.now() + 5000;
+           while (performance.now() < deadline) {
+-            if (document.getElementById('app').classList.contains(name)) return true;
++            if (isExpanded === expanded && !modeBusy && document.getElementById('app').classList.contains(name)) return true;
+             await sleep(10);
+           }
+           return false;
+@@ -374,7 +373,7 @@ async function main() {
+         // 生产默认开启超过四个 Tab，会进入左右分栏并让容器横跨整条顶栏。
+         document.getElementById('tabs').classList.add('is-split');
+         document.getElementById('notch').click();
+-        const opened = await waitForClass('expanded');
++        const opened = await waitForMode(true);
+         const topbar = document.querySelector('.topbar').getBoundingClientRect();
+         const x = topbar.left + topbar.width / 2;
+         const y = topbar.top + topbar.height / 2;
+@@ -390,7 +389,7 @@ async function main() {
+         const collapsed = document.getElementById('app').classList.contains('collapsed');
+         const remainedExpanded = document.getElementById('app').classList.contains('expanded');
+         document.getElementById('notch').click();
+-        const collapsedAfterExplicitAction = await waitForClass('collapsed');
++        const collapsedAfterExplicitAction = await waitForMode(false);
+         return {
+           opened,
+           collapsed,
+@@ -419,16 +418,17 @@ async function main() {
+     const topbarTabAndSpaceToggle = await window.webContents.executeJavaScript(`
+       (async () => {
+         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+-        const waitForClass = async (name) => {
++        const waitForMode = async (expanded) => {
++          const name = expanded ? 'expanded' : 'collapsed';
+           const deadline = performance.now() + 5000;
+           while (performance.now() < deadline) {
+-            if (document.getElementById('app').classList.contains(name)) return true;
++            if (isExpanded === expanded && !modeBusy && document.getElementById('app').classList.contains(name)) return true;
+             await sleep(10);
+           }
+           return false;
+         };
+         document.getElementById('notch').click();
+-        const opened = await waitForClass('expanded');
++        const opened = await waitForMode(true);
+         const todoButton = document.getElementById('tab-button-todo');
+         const rect = todoButton.getBoundingClientRect();
+         const hitTarget = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+@@ -441,7 +441,7 @@ async function main() {
+           bubbles: true,
+           cancelable: true,
+         }));
+-        const collapsedBySpace = await waitForClass('collapsed');
++        const collapsedBySpace = await waitForMode(false);
+         return {
+           opened,
+           todoActivated,

@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const schema = require('./extension-schema');
@@ -10,11 +11,14 @@ function queryExtension(directory, manifest, commandId, query, signal, executabl
     const env = { ELECTRON_RUN_AS_NODE: '1' };
     for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'PATH']) if (process.env[key]) env[key] = process.env[key];
     const requestId = require('node:crypto').randomUUID();
-    const runner = path.join(__dirname, 'extension-runner.js');
-    const args = ['--permission', `--allow-fs-read=${runner}`, `--allow-fs-read=${directory}`];
-    if (operation.storagePath) args.push(`--allow-fs-read=${operation.storagePath}`, `--allow-fs-write=${operation.storagePath}`);
-    args.push(runner, path.join(directory, manifest.runtime.entry), requestId);
-    const child = spawn(executable, args, { cwd: directory, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+    const runner = fs.realpathSync(path.join(__dirname, 'extension-runner.js'));
+    const extensionDirectory = fs.realpathSync(directory);
+    const entry = fs.realpathSync(path.join(extensionDirectory, manifest.runtime.entry));
+    const storagePath = operation.storagePath ? fs.realpathSync(operation.storagePath) : '';
+    const args = ['--permission', `--allow-fs-read=${runner}`, `--allow-fs-read=${extensionDirectory}`];
+    if (storagePath) args.push(`--allow-fs-read=${storagePath}`, `--allow-fs-write=${storagePath}`);
+    args.push(runner, entry, requestId);
+    const child = spawn(executable, args, { cwd: extensionDirectory, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false, buffer = '', bytes = 0, ready = false, timer, cancelTimer;
     const finish = (error, result) => {
       if (settled) return;
@@ -82,7 +86,7 @@ function queryExtension(directory, manifest, commandId, query, signal, executabl
         } catch (error) { finish(Error('invalid_extension_response')); }
       }
     });
-    function sendRequest() { child.stdin.write(JSON.stringify({ type: operation.type === 'execute' ? 'execute' : 'query', requestId, commandId, query, extensionId: manifest.id, ...(operation.itemId ? { itemId: operation.itemId } : {}), context: { platform: process.platform, ...(operation.storagePath ? { storagePath: operation.storagePath } : {}) } }) + '\n'); }
+    function sendRequest() { child.stdin.write(JSON.stringify({ type: operation.type === 'execute' ? 'execute' : 'query', requestId, commandId, query, extensionId: manifest.id, ...(operation.itemId ? { itemId: operation.itemId } : {}), context: { platform: process.platform, ...(storagePath ? { storagePath } : {}) } }) + '\n'); }
   });
 }
 module.exports = { queryExtension };
