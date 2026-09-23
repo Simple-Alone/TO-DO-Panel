@@ -56,7 +56,7 @@ test('extension permissions use canonical temporary paths',async()=>{
       const r=JSON.parse(line);process.stdout.write(JSON.stringify({type:'result',requestId:r.requestId,items:[{id:'path',title:'Storage',action:{type:'copy-text',text:r.context.storagePath}}]})+'\\n');
     });`);
     const response=await queryExtension(code,example,'upper','',undefined,process.execPath,{storagePath:data});
-    assert.equal(response[0].action.text,await fs.realpath(data));
+    assert.equal(await fs.realpath(response[0].action.text),await fs.realpath(data));
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 

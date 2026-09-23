@@ -58,7 +58,7 @@ index 018c94f..b7f2f5c 100644
  }
  
 diff --git a/tests/launcher-completion.test.js b/tests/launcher-completion.test.js
-index 9c12f07..a60f1e2 100644
+index 9c12f07..7b346e6 100644
 --- a/tests/launcher-completion.test.js
 +++ b/tests/launcher-completion.test.js
 @@ -47,6 +47,19 @@ test('source schemas reject malformed rows without mutating raw data',()=>{
@@ -74,7 +74,7 @@ index 9c12f07..a60f1e2 100644
 +      const r=JSON.parse(line);process.stdout.write(JSON.stringify({type:'result',requestId:r.requestId,items:[{id:'path',title:'Storage',action:{type:'copy-text',text:r.context.storagePath}}]})+'\\n');
 +    });`);
 +    const response=await queryExtension(code,example,'upper','',undefined,process.execPath,{storagePath:data});
-+    assert.equal(response[0].action.text,await fs.realpath(data));
++    assert.equal(await fs.realpath(response[0].action.text),await fs.realpath(data));
 +  }finally{await fs.rm(root,{recursive:true,force:true});}
 +});
 +
@@ -169,3 +169,16 @@ index 4367783..6d72049 100644
          return {
            opened,
            todoActivated,
+diff --git a/tests/startup.electron.js b/tests/startup.electron.js
+index a3e81cc..e87f6c9 100644
+--- a/tests/startup.electron.js
++++ b/tests/startup.electron.js
+@@ -636,7 +636,7 @@ app.on('web-contents-created', (_event, contents) => {
+             &&!document.getElementById('home-media-progress').hidden
+             &&document.querySelector('.home-media').dataset.mediaPlaying==='true'
+             &&document.querySelector('[data-home-media="toggle"]').getAttribute('aria-label')==='暂停';
+-          const audio=document.getElementById('home-music-audio'),progress=document.getElementById('home-media-progress'),progressMutations=[];const progressObserver=new MutationObserver((records)=>progressMutations.push(...records));progressObserver.observe(progress,{attributes:true,attributeFilter:['hidden'],attributeOldValue:true});document.querySelector('[data-home-media="next"]').click();await new Promise(resolve=>setTimeout(resolve,300));progressObserver.disconnect();const musicTrackSwitchStable=!progress.hidden&&!progressMutations.some(record=>record.oldValue===null)&&document.getElementById('home-media-title').textContent==='下一首测试歌曲'&&!audio.paused;
++          const audio=document.getElementById('home-music-audio'),progress=document.getElementById('home-media-progress'),progressMutations=[];const progressObserver=new MutationObserver((records)=>progressMutations.push(...records));progressObserver.observe(progress,{attributes:true,attributeFilter:['hidden'],attributeOldValue:true});document.querySelector('[data-home-media="next"]').click();let trackSwitchDeadline=performance.now()+3000;while((document.getElementById('home-media-title').textContent!=='下一首测试歌曲'||audio.paused)&&performance.now()<trackSwitchDeadline)await new Promise(resolve=>setTimeout(resolve,20));progressMutations.push(...progressObserver.takeRecords());progressObserver.disconnect();const musicTrackSwitchStable=!progress.hidden&&!progressMutations.some(record=>record.oldValue===null)&&document.getElementById('home-media-title').textContent==='下一首测试歌曲'&&!audio.paused;
+           const sourceBefore=audio.src;let emptied=0;audio.addEventListener('emptied',()=>{emptied+=1;});
+           document.getElementById('home-media-library').click();await pause();const sourceSelect=document.getElementById('music-source-select');sourceSelect.value='catalog-test';sourceSelect.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(resolve=>setTimeout(resolve,300));
+           const firstPlaylistPlaying=audio.src!==sourceBefore&&!audio.paused&&emptied>0&&document.getElementById('home-media-title').textContent==='晨光'&&document.getElementById('music-playlist-select').value==='morning';
