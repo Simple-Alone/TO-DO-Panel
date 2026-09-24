@@ -874,6 +874,27 @@ test('editable fields receive a native context menu without collapsing the panel
   assert.match(mainJs, /menu\.popup\(\{ window: owner, callback: release \}\)/);
 });
 
+test('macOS text editing lowers the native panel so IME candidates stay visible', () => {
+  assert.match(preloadJs, /setTextInputActive: \(active\) => ipcRenderer\.send\('window:set-text-input-active'/);
+  assert.match(windowIpcJs, /window:set-text-input-active/);
+  assert.match(appJs, /document\.addEventListener\('focusin', syncTextInputWindowLayer, true\)/);
+  assert.match(appJs, /document\.addEventListener\('focusout',[\s\S]*?queueMicrotask\(syncTextInputWindowLayer\)/);
+  assert.match(mainJs, /textInputActive[\s\S]*?mainWindowLayerPolicy/);
+  assert.match(mainJs, /mediaPermissionRequests[\s\S]*?syncMainWindowLayer\(\)/);
+});
+
+test('cross-display relocation applies target metrics before revealing the collapsed grip', () => {
+  const relocationStart = mainJs.indexOf('function repositionWindow(display)');
+  const relocationEnd = mainJs.indexOf('function beginNativeCollapse()', relocationStart);
+  const relocationSource = mainJs.slice(relocationStart, relocationEnd);
+  assert.ok(relocationStart >= 0 && relocationEnd > relocationStart);
+  assert.match(mainJs, /function syncWindowLayoutMetrics\(display\)[\s\S]*?getLayoutMetrics\(display\)/);
+  assert.match(
+    relocationSource,
+    /applyWindowGeometry\('collapsed', display\);[\s\S]*?syncWindowLayoutMetrics\(display\);[\s\S]*?target\.setOpacity\(1\)/
+  );
+});
+
 test('home chat exposes temporary-session state, recovery controls and safe markdown', () => {
   assert.match(html, /id="home-chat-empty"/);
   assert.match(html, /id="home-chat-provider"/);

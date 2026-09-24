@@ -31,6 +31,26 @@ test('shared design tokens load from shell.css before module and shell rules', (
   assert.doesNotMatch(stylesCss, /^:root \{/);
 });
 
+test('closing panel fades its shell throughout the contraction', () => {
+  const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(
+    closingShell,
+    /clip-path var\(--d-island-close\) var\(--ease-soft\) var\(--d-island-close-delay\)/
+  );
+  assert.match(
+    closingShell,
+    /opacity var\(--d-island-close\) var\(--ease-out\) var\(--d-island-close-delay\)/
+  );
+  assert.doesNotMatch(shellCss, /--d-island-shell-fade-delay/);
+});
+
+test('collapsed notch applies display height immediately while retaining visual transitions', () => {
+  const collapsedNotch = stylesCss.match(/#app\.collapsed \.notch \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(collapsedNotch, /height: var\(--notch-h, 38px\)/);
+  assert.match(collapsedNotch, /border-radius var\(--d-base\) var\(--ease-out\)/);
+  assert.doesNotMatch(collapsedNotch, /height var\(/);
+});
+
 test('credential styles load as a dedicated module while shared theme selectors remain in the shell stylesheet', () => {
   assert.ok(html.indexOf('credentials.css') < html.indexOf('launcher.css'));
   assert.match(credentialsCss, /\.credentials-page/);

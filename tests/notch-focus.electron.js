@@ -250,6 +250,32 @@ async function main() {
     window.focus();
     window.webContents.focus();
     await new Promise((resolve) => setTimeout(resolve, 30));
+    const textInputLayerAudit = await window.webContents.executeJavaScript(`
+      (async () => {
+        const originalAPI = window.notchAPI;
+        const events = [];
+        window.notchAPI = { ...(originalAPI || {}), setTextInputActive: (active) => events.push(active) };
+        const textarea = document.createElement('textarea');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        const editable = document.createElement('div');
+        editable.contentEditable = 'true';
+        document.body.append(textarea, checkbox, editable);
+        textarea.focus();
+        await Promise.resolve();
+        checkbox.focus();
+        await Promise.resolve();
+        editable.focus();
+        await Promise.resolve();
+        editable.blur();
+        await Promise.resolve();
+        textarea.remove(); checkbox.remove(); editable.remove();
+        window.notchAPI = originalAPI;
+        return events;
+      })()
+    `);
+    assert.deepEqual(textInputLayerAudit, [true, false, true, false],
+      'only editable text controls should request the macOS IME-safe window layer');
     await window.webContents.executeJavaScript(`
       (async () => {
         const appRoot = document.getElementById('app');
@@ -336,6 +362,27 @@ async function main() {
       `折叠外壳不能画焦点描边，当前为 ${focusStyle.outlineWidth} ${focusStyle.outlineStyle}`
     );
     assert.notEqual(focusStyle.dotBoxShadow, 'none', '焦点提示应转移到中间抓握条');
+
+    const relocatedGripLayouts = [];
+    for (const stripHeight of [24, 38]) {
+      relocatedGripLayouts.push(await window.webContents.executeJavaScript(`(() => {
+        applyLayoutMetrics({
+          stripHeight: ${stripHeight},
+          notchHeight: ${stripHeight},
+          menuBarHeight: ${stripHeight},
+        });
+        const notch = document.getElementById('notch').getBoundingClientRect();
+        const grip = document.querySelector('.notch-dot').getBoundingClientRect();
+        return {
+          notchHeight: Math.round(notch.height),
+          gripBottomInset: Math.round(notch.bottom - grip.bottom),
+        };
+      })()`));
+    }
+    assert.deepEqual(relocatedGripLayouts, [
+      { notchHeight: 24, gripBottomInset: 2 },
+      { notchHeight: 38, gripBottomInset: 2 },
+    ], '跨屏度量更新后，抓握横杠应始终贴住折叠条下沿');
 
     const collapsedPanelLayers = await window.webContents.executeJavaScript(`
       (() => {

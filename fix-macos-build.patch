@@ -1,14 +1,36 @@
 diff --git a/.github/workflows/release-dmg.yml b/.github/workflows/release-dmg.yml
-index 7d549df..fd7c573 100644
+index 082d9dd..fd7c573 100644
 --- a/.github/workflows/release-dmg.yml
 +++ b/.github/workflows/release-dmg.yml
-@@ -3,5 +3,5 @@ name: Release macOS and Windows
+@@ -3,7 +3,7 @@ name: Release macOS and Windows
  on:
    workflow_dispatch:
    push:
 -    branches: [feat/windows-support]
 +    branches: [main]
      tags: ['v*.*.*']
+ 
+ permissions:
+@@ -26,6 +26,9 @@ jobs:
+           cache: npm
+       - run: node scripts/release-policy.js
+       - run: npm ci
++      - name: Install sync server dependencies
++        working-directory: sync-server
++        run: npm ci
+       - run: npm test
+       - name: Build DMG
+         run: npm run build
+@@ -57,6 +60,9 @@ jobs:
+           cache: npm
+       - run: node scripts/release-policy.js
+       - run: npm ci
++      - name: Install sync server dependencies
++        working-directory: sync-server
++        run: npm ci
+       - run: npm test
+       - run: npm run build:win
+       - name: Verify installed Windows application
 diff --git a/launcher/extension-host.js b/launcher/extension-host.js
 index 4920639..5b247ec 100644
 --- a/launcher/extension-host.js
@@ -48,6 +70,239 @@ index 4920639..5b247ec 100644
    });
  }
  module.exports = { queryExtension };
+diff --git a/main-services.js b/main-services.js
+index a3f2746..a287564 100644
+--- a/main-services.js
++++ b/main-services.js
+@@ -556,6 +556,15 @@ function panelBlurCollapsePolicy({ mode, windowFocused, guarded } = {}) {
+   };
+ }
+ 
++function mainWindowLayerPolicy({ platform, textInputActive, systemPromptActive } = {}) {
++  if (platform !== 'darwin') return { alwaysOnTop: true, level: 'screen-saver' };
++  if (systemPromptActive === true) return { alwaysOnTop: false, level: 'normal' };
++  return {
++    alwaysOnTop: true,
++    level: textInputActive === true ? 'floating' : 'screen-saver',
++  };
++}
++
+ function isValidShortcutAccelerator(shortcut, { allowEmpty = false, allowSpace = false } = {}) {
+   if (shortcut === '') return allowEmpty;
+   if (shortcut === 'Space') return allowSpace;
+@@ -651,6 +660,7 @@ module.exports = {
+   collapsedDisplayFollowPolicy,
+   collapsedDisplayRelocationPolicy,
+   panelBlurCollapsePolicy,
++  mainWindowLayerPolicy,
+   isValidShortcutAccelerator,
+   shortcutAcceleratorIdentity,
+   shortcutAssignmentConflict,
+diff --git a/main.js b/main.js
+index e8d84d8..e935cc6 100644
+--- a/main.js
++++ b/main.js
+@@ -146,6 +146,7 @@ const {
+   collapsedDisplayFollowPolicy,
+   collapsedDisplayRelocationPolicy,
+   panelBlurCollapsePolicy,
++  mainWindowLayerPolicy,
+   isValidShortcutAccelerator,
+   shortcutAssignmentConflict,
+   reduceClipboardObservation,
+@@ -262,6 +263,8 @@ let hideWhenCollapsed = false;
+ let isQuitting = false;
+ let mediaPermissionRequests = 0;
+ let transientSystemInteractionRequests = 0;
++let textInputActive = false;
++let appliedMainWindowLayer = '';
+ const mediaPermissionCoordinator = createForegroundMediaPermissionCoordinator();
+ 
+ let notificationWindow = null;
+@@ -328,6 +331,20 @@ function cancelCollapseWatchdog() {
+   }
+ }
+ 
++function syncMainWindowLayer() {
++  if (!mainWindow || mainWindow.isDestroyed()) return;
++  const policy = mainWindowLayerPolicy({
++    platform: process.platform,
++    textInputActive,
++    systemPromptActive: mediaPermissionRequests > 0,
++  });
++  const identity = `${policy.alwaysOnTop}:${policy.level}`;
++  if (identity === appliedMainWindowLayer) return;
++  if (policy.alwaysOnTop) mainWindow.setAlwaysOnTop(true, policy.level);
++  else mainWindow.setAlwaysOnTop(false);
++  appliedMainWindowLayer = identity;
++}
++
+ function applyMode(mode, display) {
+   if (!mainWindow || mainWindow.isDestroyed()) return;
+   cancelCollapseWatchdog();
+@@ -336,6 +353,8 @@ function applyMode(mode, display) {
+   applyWindowGeometry(mode, display);
+   mainWindow.setIgnoreMouseEvents(false);
+   currentMode = mode;
++  if (mode === 'collapsed') textInputActive = false;
++  syncMainWindowLayer();
+   if (mode === 'expanded') hideWhenCollapsed = false;
+   if (mode === 'collapsed' && hideWhenCollapsed) {
+     hideWhenCollapsed = false;
+@@ -354,6 +373,11 @@ function cancelDisplayRelocation(restoreOpacity = true) {
+   if (restoreOpacity && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOpacity(1);
+ }
+ 
++function syncWindowLayoutMetrics(display) {
++  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
++  mainWindow.webContents.send('window:metrics-changed', getLayoutMetrics(display));
++}
++
+ function repositionWindow(display) {
+   if (!mainWindow || mainWindow.isDestroyed()) return;
+   const currentDisplay = getWindowDisplay();
+@@ -365,6 +389,7 @@ function repositionWindow(display) {
+   });
+   if (!policy.conceal) {
+     applyWindowGeometry(currentMode, display);
++    if (display?.id !== undefined && display.id !== currentDisplay.id) syncWindowLayoutMetrics(display);
+     return;
+   }
+ 
+@@ -375,6 +400,7 @@ function repositionWindow(display) {
+   if (displayRelocationTimer) clearTimeout(displayRelocationTimer);
+   target.setOpacity(0);
+   applyWindowGeometry('collapsed', display);
++  syncWindowLayoutMetrics(display);
+   displayRelocationTimer = setTimeout(() => {
+     if (generation !== displayRelocationGeneration || mainWindow !== target || target.isDestroyed()) return;
+     displayRelocationTimer = null;
+@@ -616,7 +642,8 @@ function createWindow() {
+   const rendererOwnerId = mainWindow.webContents.id;
+   mainWindow.webContents.on('render-process-gone', () => aiModelService?.cancelOwner(rendererOwnerId));
+ 
+-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
++  appliedMainWindowLayer = '';
++  syncMainWindowLayer();
+   if (process.platform === 'darwin') mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+   if (process.platform === 'win32') mainWindow.setMenu(null);
+ 
+@@ -640,6 +667,8 @@ function createWindow() {
+   mainWindow.on('hide', () => {
+     cancelPanelBlurCollapse();
+     cancelDisplayRelocation();
++    textInputActive = false;
++    syncMainWindowLayer();
+     syncHoverSpacePolling();
+     syncDisplayFollowPolling();
+   });
+@@ -658,6 +687,8 @@ function createWindow() {
+     cancelCollapseWatchdog();
+     cancelDisplayRelocation(false);
+     hideWhenCollapsed = false;
++    textInputActive = false;
++    appliedMainWindowLayer = '';
+     mainWindow = null;
+     stopDisplayFollowPolling();
+   });
+@@ -1187,6 +1218,11 @@ registerWindowIpc({
+     windowsCollapsedHovering = hovering;
+     applyWindowGeometry('collapsed');
+   },
++  setTextInputActive: (active) => {
++    if (process.platform !== 'darwin') return;
++    textInputActive = active === true && currentMode !== 'collapsed';
++    syncMainWindowLayer();
++  },
+   getMetrics: windowGeometry.getLayoutMetrics,
+   keepOpen: () => {
+     cancelPanelBlurCollapse();
+@@ -1214,6 +1250,7 @@ async function requestMacMediaAccess(mediaType) {
+     activate: () => app.focus({ steal: true }),
+     track: (delta) => {
+       mediaPermissionRequests = Math.max(0, mediaPermissionRequests + delta);
++      syncMainWindowLayer();
+     },
+     request: () => systemPreferences.askForMediaAccess(mediaType),
+   });
+diff --git a/main/ipc/window.js b/main/ipc/window.js
+index 7b5f01c..02fa656 100644
+--- a/main/ipc/window.js
++++ b/main/ipc/window.js
+@@ -4,6 +4,7 @@ function registerWindowIpc({
+   setMode,
+   beginCollapse,
+   setCollapsedHover,
++  setTextInputActive,
+   getMetrics,
+   keepOpen,
+   setTab,
+@@ -20,6 +21,9 @@ function registerWindowIpc({
+   ipcMain.on('window:set-collapsed-hover', (event, hovering) => {
+     if (isMainWindowSender(event.sender)) setCollapsedHover(hovering === true);
+   });
++  ipcMain.on('window:set-text-input-active', (event, active) => {
++    if (isMainWindowSender(event.sender)) setTextInputActive(active === true);
++  });
+   ipcMain.handle('window:metrics', (event) => {
+     if (!isMainWindowSender(event.sender)) return undefined;
+     return getMetrics();
+diff --git a/preload.js b/preload.js
+index c1b2097..75fe246 100644
+--- a/preload.js
++++ b/preload.js
+@@ -12,6 +12,7 @@ const api = {
+   setMode: (mode) => ipcRenderer.invoke('window:set-mode', mode),
+   beginCollapse: () => ipcRenderer.invoke('window:begin-collapse'),
+   setCollapsedHover: (hovering) => ipcRenderer.send('window:set-collapsed-hover', hovering === true),
++  setTextInputActive: (active) => ipcRenderer.send('window:set-text-input-active', active === true),
+   setTab: (tab) => ipcRenderer.invoke('window:set-tab', tab),
+   keepPanelOpen: () => ipcRenderer.send('window:keep-open'),
+   ensureMicrophone: () => ipcRenderer.invoke('media:microphone'),
+@@ -203,6 +204,7 @@ api.window = Object.freeze({
+   setMode: api.setMode,
+   beginCollapse: api.beginCollapse,
+   setCollapsedHover: api.setCollapsedHover,
++  setTextInputActive: api.setTextInputActive,
+   setTab: api.setTab,
+   keepPanelOpen: api.keepPanelOpen,
+   getMetrics: api.getMetrics,
+diff --git a/renderer/app.js b/renderer/app.js
+index fbcb5c5..fb60c75 100644
+--- a/renderer/app.js
++++ b/renderer/app.js
+@@ -318,6 +318,31 @@ panel.addEventListener('click', (e) => {
+   e.stopPropagation();
+ });
+ 
++const NON_TEXT_INPUT_TYPES = new Set([
++  'button', 'checkbox', 'color', 'date', 'datetime-local', 'file', 'hidden', 'image',
++  'month', 'number', 'radio', 'range', 'reset', 'submit', 'time', 'week',
++]);
++let reportedTextInputActive = false;
++
++function isTextInputElement(element) {
++  if (!(element instanceof Element)) return false;
++  const editable = element.closest('textarea, input, [contenteditable]:not([contenteditable="false"])');
++  if (!editable || editable.disabled || editable.readOnly) return false;
++  if (editable.matches('[contenteditable]')) return true;
++  return editable.tagName === 'TEXTAREA'
++    || (editable.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has(editable.type));
++}
++
++function syncTextInputWindowLayer() {
++  const active = isTextInputElement(document.activeElement);
++  if (active === reportedTextInputActive) return;
++  reportedTextInputActive = active;
++  window.notchAPI?.setTextInputActive?.(active);
++}
++
++document.addEventListener('focusin', syncTextInputWindowLayer, true);
++document.addEventListener('focusout', () => queueMicrotask(syncTextInputWindowLayer), true);
++
+ // Esc 收起面板（菜单栏会拦截顶部刘海条的点击，给收起多一条可靠路径）；
+ // 焦点在输入框/速记里时，第一次 Esc 只退出输入。
+ // Escape 不会原生到达页面（被浏览器层吞掉），由主进程 before-input-event 转发
 diff --git a/renderer/home-music-controller.js b/renderer/home-music-controller.js
 index 786c8d6..e75105f 100644
 --- a/renderer/home-music-controller.js
@@ -82,8 +337,19 @@ index 786c8d6..e75105f 100644
      documentRef.addEventListener('notch:tabchange', (event) => { if (event.detail?.tab === 'home' || musicAudio.paused || musicAudio.ended || !loadedMusicId) return; musicResumeAfterTabChange = true; const epoch = musicLoadEpoch; setTimeout(async () => { if (!musicResumeAfterTabChange || epoch !== musicLoadEpoch || musicAudio.ended) { musicResumeAfterTabChange = false; return; } if (!musicAudio.paused) { musicResumeAfterTabChange = false; return; } try { await musicAudio.play(); } catch {} musicResumeAfterTabChange = false; renderMusicCard(); }, 0); });
      $('home-media-source-select').addEventListener('change', (event) => { saveMusicDiscoveryFilter(event.target.value, ''); renderHomeMusicDiscovery(); void ensureHomeMusicCategories(); });
      windowRef.addEventListener('notch:settings-category-change', (event) => { if (event.detail?.id === 'music') void ensureMusicSettingsCategories(); });
+diff --git a/renderer/shell.css b/renderer/shell.css
+index 433edf8..d2d8a65 100644
+--- a/renderer/shell.css
++++ b/renderer/shell.css
+@@ -87,6 +87,5 @@
+   --d-island-close: 280ms;
+   --d-island-close-delay: 60ms;
+   --d-island-shell-fade: 80ms;
+-  --d-island-shell-fade-delay: 260ms;
+   --island-half-width: 100px;
+ }
 diff --git a/renderer/styles.css b/renderer/styles.css
-index 018c94f..b7f2f5c 100644
+index 018c94f..b2cf250 100644
 --- a/renderer/styles.css
 +++ b/renderer/styles.css
 @@ -64,13 +64,13 @@ body {
@@ -102,6 +368,25 @@ index 018c94f..b7f2f5c 100644
    box-shadow: 0 0 0 1px var(--focus-ring);
  }
  
+@@ -80,6 +80,9 @@ body {
+   height: var(--notch-h, 38px);
+   align-items: flex-end;
+   padding-bottom: 2px;
++  transition:
++    border-radius var(--d-base) var(--ease-out),
++    background var(--d-fast) var(--ease-out);
+ }
+ 
+ /* 刘海脱离布局流：退场时不再向上拖动面板，黑色外壳始终贴住屏幕顶部。 */
+@@ -229,7 +232,7 @@ body {
+   opacity: 0;
+   transition:
+     clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay),
+-    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay);
++    opacity var(--d-island-close) var(--ease-out) var(--d-island-close-delay);
+ }
+ 
+ #app.closing .panel > .topbar,
 diff --git a/tests/launcher-completion.test.js b/tests/launcher-completion.test.js
 index 9c12f07..7b346e6 100644
 --- a/tests/launcher-completion.test.js
@@ -126,11 +411,86 @@ index 9c12f07..7b346e6 100644
  test('extension permissions allow private data but deny outside IO, code writes and child processes',async()=>{
    const root=await fs.mkdtemp(path.join(os.tmpdir(),'launcher-permissions-'));
    try{
+diff --git a/tests/main-services.test.js b/tests/main-services.test.js
+index af20f9a..275c4f3 100644
+--- a/tests/main-services.test.js
++++ b/tests/main-services.test.js
+@@ -34,6 +34,7 @@ const {
+   collapsedDisplayFollowPolicy,
+   collapsedDisplayRelocationPolicy,
+   panelBlurCollapsePolicy,
++  mainWindowLayerPolicy,
+   isValidShortcutAccelerator,
+   shortcutAcceleratorIdentity,
+   shortcutAssignmentConflict,
+@@ -230,6 +231,29 @@ test('panel blur collapses only after the window stays unfocused', () => {
+   assert.equal(panelBlurCollapsePolicy({ mode: 'launcher', windowFocused: false, guarded: false }).closeLauncher, true);
+ });
+ 
++test('macOS lowers the panel below IME and system prompts only while needed', () => {
++  assert.deepEqual(mainWindowLayerPolicy({ platform: 'darwin' }), {
++    alwaysOnTop: true,
++    level: 'screen-saver',
++  });
++  assert.deepEqual(mainWindowLayerPolicy({ platform: 'darwin', textInputActive: true }), {
++    alwaysOnTop: true,
++    level: 'floating',
++  });
++  assert.deepEqual(mainWindowLayerPolicy({
++    platform: 'darwin',
++    textInputActive: true,
++    systemPromptActive: true,
++  }), {
++    alwaysOnTop: false,
++    level: 'normal',
++  });
++  assert.deepEqual(mainWindowLayerPolicy({ platform: 'win32', textInputActive: true }), {
++    alwaysOnTop: true,
++    level: 'screen-saver',
++  });
++});
++
+ test('global shortcut policy validates optional actions and detects in-app conflicts', () => {
+   assert.equal(isValidShortcutAccelerator('Space', { allowSpace: true }), true);
+   assert.equal(isValidShortcutAccelerator('Space', { allowEmpty: true }), false);
 diff --git a/tests/notch-focus.electron.js b/tests/notch-focus.electron.js
-index 4367783..6d72049 100644
+index 4367783..6379c4a 100644
 --- a/tests/notch-focus.electron.js
 +++ b/tests/notch-focus.electron.js
-@@ -318,12 +318,11 @@ async function main() {
+@@ -250,6 +250,32 @@ async function main() {
+     window.focus();
+     window.webContents.focus();
+     await new Promise((resolve) => setTimeout(resolve, 30));
++    const textInputLayerAudit = await window.webContents.executeJavaScript(`
++      (async () => {
++        const originalAPI = window.notchAPI;
++        const events = [];
++        window.notchAPI = { ...(originalAPI || {}), setTextInputActive: (active) => events.push(active) };
++        const textarea = document.createElement('textarea');
++        const checkbox = document.createElement('input');
++        checkbox.type = 'checkbox';
++        const editable = document.createElement('div');
++        editable.contentEditable = 'true';
++        document.body.append(textarea, checkbox, editable);
++        textarea.focus();
++        await Promise.resolve();
++        checkbox.focus();
++        await Promise.resolve();
++        editable.focus();
++        await Promise.resolve();
++        editable.blur();
++        await Promise.resolve();
++        textarea.remove(); checkbox.remove(); editable.remove();
++        window.notchAPI = originalAPI;
++        return events;
++      })()
++    `);
++    assert.deepEqual(textInputLayerAudit, [true, false, true, false],
++      'only editable text controls should request the macOS IME-safe window layer');
+     await window.webContents.executeJavaScript(`
+       (async () => {
+         const appRoot = document.getElementById('app');
+@@ -318,12 +344,11 @@ async function main() {
            const dotStyle = getComputedStyle(notch.querySelector('.notch-dot'));
            result = {
              active: document.activeElement === notch,
@@ -144,7 +504,7 @@ index 4367783..6d72049 100644
            await new Promise((resolve) => setTimeout(resolve, 20));
          } while (performance.now() < deadline);
          return result;
-@@ -331,7 +330,6 @@ async function main() {
+@@ -331,7 +356,6 @@ async function main() {
      `);
  
      assert.equal(focusStyle.active, true, '折叠条应能通过键盘获得焦点');
@@ -152,7 +512,35 @@ index 4367783..6d72049 100644
      assert.equal(
        focusStyle.outlineStyle,
        'none',
-@@ -363,10 +361,11 @@ async function main() {
+@@ -339,6 +363,27 @@ async function main() {
+     );
+     assert.notEqual(focusStyle.dotBoxShadow, 'none', '焦点提示应转移到中间抓握条');
+ 
++    const relocatedGripLayouts = [];
++    for (const stripHeight of [24, 38]) {
++      relocatedGripLayouts.push(await window.webContents.executeJavaScript(`(() => {
++        applyLayoutMetrics({
++          stripHeight: ${stripHeight},
++          notchHeight: ${stripHeight},
++          menuBarHeight: ${stripHeight},
++        });
++        const notch = document.getElementById('notch').getBoundingClientRect();
++        const grip = document.querySelector('.notch-dot').getBoundingClientRect();
++        return {
++          notchHeight: Math.round(notch.height),
++          gripBottomInset: Math.round(notch.bottom - grip.bottom),
++        };
++      })()`));
++    }
++    assert.deepEqual(relocatedGripLayouts, [
++      { notchHeight: 24, gripBottomInset: 2 },
++      { notchHeight: 38, gripBottomInset: 2 },
++    ], '跨屏度量更新后，抓握横杠应始终贴住折叠条下沿');
++
+     const collapsedPanelLayers = await window.webContents.executeJavaScript(`
+       (() => {
+         const panel = document.querySelector('.panel');
+@@ -363,10 +408,11 @@ async function main() {
      const topbarBlankToggle = await window.webContents.executeJavaScript(`
        (async () => {
          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -166,7 +554,7 @@ index 4367783..6d72049 100644
              await sleep(10);
            }
            return false;
-@@ -374,7 +373,7 @@ async function main() {
+@@ -374,7 +420,7 @@ async function main() {
          // 生产默认开启超过四个 Tab，会进入左右分栏并让容器横跨整条顶栏。
          document.getElementById('tabs').classList.add('is-split');
          document.getElementById('notch').click();
@@ -175,7 +563,7 @@ index 4367783..6d72049 100644
          const topbar = document.querySelector('.topbar').getBoundingClientRect();
          const x = topbar.left + topbar.width / 2;
          const y = topbar.top + topbar.height / 2;
-@@ -390,7 +389,7 @@ async function main() {
+@@ -390,7 +436,7 @@ async function main() {
          const collapsed = document.getElementById('app').classList.contains('collapsed');
          const remainedExpanded = document.getElementById('app').classList.contains('expanded');
          document.getElementById('notch').click();
@@ -184,7 +572,7 @@ index 4367783..6d72049 100644
          return {
            opened,
            collapsed,
-@@ -419,16 +418,17 @@ async function main() {
+@@ -419,16 +465,17 @@ async function main() {
      const topbarTabAndSpaceToggle = await window.webContents.executeJavaScript(`
        (async () => {
          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -205,7 +593,7 @@ index 4367783..6d72049 100644
          const todoButton = document.getElementById('tab-button-todo');
          const rect = todoButton.getBoundingClientRect();
          const hitTarget = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-@@ -441,7 +441,7 @@ async function main() {
+@@ -441,7 +488,7 @@ async function main() {
            bubbles: true,
            cancelable: true,
          }));
@@ -215,37 +603,230 @@ index 4367783..6d72049 100644
            opened,
            todoActivated,
 diff --git a/tests/release-policy.test.js b/tests/release-policy.test.js
-index 132d651..5609e2a 100644
+index 132d651..4c06d6c 100644
 --- a/tests/release-policy.test.js
 +++ b/tests/release-policy.test.js
-@@ -81,4 +81,5 @@ test('the release workflow lets manual runs verify artifacts while policy gates
+@@ -10,8 +10,11 @@ const releasePolicyScript = path.join(projectRoot, 'scripts', 'release-policy.js
+ const releaseWorkflowPath = path.join(projectRoot, '.github', 'workflows', 'release-dmg.yml');
+ const entitlementsPath = path.join(projectRoot, 'build', 'entitlements.mac.plist');
+ const readmePath = path.join(projectRoot, 'README.md');
++const changelogPath = path.join(projectRoot, 'CHANGELOG.md');
++const releaseNotesPath = path.join(projectRoot, 'docs', 'release-notes.md');
+ const websiteDownloadPath = path.join(projectRoot, 'website', 'app', 'landingDownload.mjs');
+ const websiteContentPath = path.join(projectRoot, 'website', 'app', 'landingContent.ts');
++const websiteLayoutPath = path.join(projectRoot, 'website', 'app', 'layout.tsx');
+ const packageVersion = require(path.join(projectRoot, 'package.json')).version;
+ const packageConfig = require(path.join(projectRoot, 'package.json'));
+ 
+@@ -79,6 +82,7 @@ test('the release workflow lets manual runs verify artifacts while policy gates
+   const workflow = fs.readFileSync(releaseWorkflowPath, 'utf8');
+ 
    assert.match(workflow, /^\s{2}workflow_dispatch:\s*$/m);
 +  assert.match(workflow, /^\s{4}branches:\s*\[main\]\s*$/m);
    assert.match(workflow, /id:\s*release[\s\S]*?run:\s*node scripts\/release-policy\.js/);
    assert.match(workflow, /name:\s*Build DMG[\s\S]*?run:\s*npm run build/);
    assert.match(workflow, /name:\s*Verify and checksum DMG/);
+@@ -100,16 +104,27 @@ test('macOS packaging declares the Electron 44 minimum and least-privilege runti
+   assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/);
+ });
+ 
+-test('README requires local source builds while website release endpoints stay aligned', () => {
++test('README and website expose the current fork release endpoints', () => {
+   const readme = fs.readFileSync(readmePath, 'utf8');
++  const changelog = fs.readFileSync(changelogPath, 'utf8');
++  const releaseNotes = fs.readFileSync(releaseNotesPath, 'utf8');
+   const websiteDownload = fs.readFileSync(websiteDownloadPath, 'utf8');
+   const websiteContent = fs.readFileSync(websiteContentPath, 'utf8');
++  const websiteLayout = fs.readFileSync(websiteLayoutPath, 'utf8');
++  const versionPattern = packageVersion.replaceAll('.', '\\.');
+ 
+-  assert.match(readme, /不提供 DMG、EXE 或其他预编译安装包/);
+-  assert.match(readme, /git clone https:\/\/github\.com\/Mr-ChenH\/TO-DO-Panel\.git/);
++  assert.match(readme, new RegExp(`当前稳定版本为 \\*\\*${versionPattern}\\*\\*`));
++  assert.match(readme, new RegExp(`releases/latest/download/Dynamic-Panel-${versionPattern}-arm64\\.dmg`));
++  assert.match(readme, new RegExp(`releases/latest/download/Dynamic-Panel-${versionPattern}-windows-x64-setup\\.exe`));
++  assert.match(readme, /git clone https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel\.git/);
+   assert.match(readme, /`npm run build` \| 在 macOS 生成 Apple Silicon DMG/);
+   assert.match(readme, /`npm run build:win` \| 在 Windows 生成 x64 NSIS 安装包/);
+-  assert.doesNotMatch(readme, /releases\/latest|下载 macOS|下载 Windows|当前稳定版本/);
+-  assert.match(websiteContent, /DOWNLOAD_URL\s*=\s*"https:\/\/github\.com\/xiaopu-ai\/TO-DO-Panel\/releases\/latest"/);
+-  assert.match(websiteDownload, /LATEST_RELEASE_API_URL\s*=\s*"https:\/\/api\.github\.com\/repos\/xiaopu-ai\/TO-DO-Panel\/releases\/latest"/);
++  assert.match(changelog, new RegExp(`^## \\[${versionPattern}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
++  assert.match(releaseNotes, new RegExp(`^## ${versionPattern}$`, 'm'));
++  assert.match(releaseNotes, new RegExp(`releases/download/v${versionPattern}/Dynamic-Panel-${versionPattern}-arm64\\.dmg`));
++  assert.match(releaseNotes, new RegExp(`releases/download/v${versionPattern}/Dynamic-Panel-${versionPattern}-windows-x64-setup\\.exe`));
++  assert.match(websiteContent, /DOWNLOAD_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
++  assert.match(websiteContent, /GITHUB_URL\s*=\s*"https:\/\/github\.com\/Simple-Alone\/TO-DO-Panel"/);
++  assert.match(websiteDownload, /LATEST_RELEASE_API_URL\s*=\s*"https:\/\/api\.github\.com\/repos\/Simple-Alone\/TO-DO-Panel\/releases\/latest"/);
++  assert.match(websiteLayout, /metadataBase:\s*new URL\("https:\/\/simple-alone\.github\.io\/"\)/);
+ });
+diff --git a/tests/renderer-structure.test.js b/tests/renderer-structure.test.js
+index 404ccea..7e7f528 100644
+--- a/tests/renderer-structure.test.js
++++ b/tests/renderer-structure.test.js
+@@ -874,6 +874,27 @@ test('editable fields receive a native context menu without collapsing the panel
+   assert.match(mainJs, /menu\.popup\(\{ window: owner, callback: release \}\)/);
+ });
+ 
++test('macOS text editing lowers the native panel so IME candidates stay visible', () => {
++  assert.match(preloadJs, /setTextInputActive: \(active\) => ipcRenderer\.send\('window:set-text-input-active'/);
++  assert.match(windowIpcJs, /window:set-text-input-active/);
++  assert.match(appJs, /document\.addEventListener\('focusin', syncTextInputWindowLayer, true\)/);
++  assert.match(appJs, /document\.addEventListener\('focusout',[\s\S]*?queueMicrotask\(syncTextInputWindowLayer\)/);
++  assert.match(mainJs, /textInputActive[\s\S]*?mainWindowLayerPolicy/);
++  assert.match(mainJs, /mediaPermissionRequests[\s\S]*?syncMainWindowLayer\(\)/);
++});
++
++test('cross-display relocation applies target metrics before revealing the collapsed grip', () => {
++  const relocationStart = mainJs.indexOf('function repositionWindow(display)');
++  const relocationEnd = mainJs.indexOf('function beginNativeCollapse()', relocationStart);
++  const relocationSource = mainJs.slice(relocationStart, relocationEnd);
++  assert.ok(relocationStart >= 0 && relocationEnd > relocationStart);
++  assert.match(mainJs, /function syncWindowLayoutMetrics\(display\)[\s\S]*?getLayoutMetrics\(display\)/);
++  assert.match(
++    relocationSource,
++    /applyWindowGeometry\('collapsed', display\);[\s\S]*?syncWindowLayoutMetrics\(display\);[\s\S]*?target\.setOpacity\(1\)/
++  );
++});
++
+ test('home chat exposes temporary-session state, recovery controls and safe markdown', () => {
+   assert.match(html, /id="home-chat-empty"/);
+   assert.match(html, /id="home-chat-provider"/);
+diff --git a/tests/renderer-styles-structure.test.js b/tests/renderer-styles-structure.test.js
+index 331ca4d..6f6964d 100644
+--- a/tests/renderer-styles-structure.test.js
++++ b/tests/renderer-styles-structure.test.js
+@@ -31,6 +31,26 @@ test('shared design tokens load from shell.css before module and shell rules', (
+   assert.doesNotMatch(stylesCss, /^:root \{/);
+ });
+ 
++test('closing panel fades its shell throughout the contraction', () => {
++  const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
++  assert.match(
++    closingShell,
++    /clip-path var\(--d-island-close\) var\(--ease-soft\) var\(--d-island-close-delay\)/
++  );
++  assert.match(
++    closingShell,
++    /opacity var\(--d-island-close\) var\(--ease-out\) var\(--d-island-close-delay\)/
++  );
++  assert.doesNotMatch(shellCss, /--d-island-shell-fade-delay/);
++});
++
++test('collapsed notch applies display height immediately while retaining visual transitions', () => {
++  const collapsedNotch = stylesCss.match(/#app\.collapsed \.notch \{([\s\S]*?)\n\}/)?.[1] || '';
++  assert.match(collapsedNotch, /height: var\(--notch-h, 38px\)/);
++  assert.match(collapsedNotch, /border-radius var\(--d-base\) var\(--ease-out\)/);
++  assert.doesNotMatch(collapsedNotch, /height var\(/);
++});
++
+ test('credential styles load as a dedicated module while shared theme selectors remain in the shell stylesheet', () => {
+   assert.ok(html.indexOf('credentials.css') < html.indexOf('launcher.css'));
+   assert.match(credentialsCss, /\.credentials-page/);
 diff --git a/tests/startup.electron.js b/tests/startup.electron.js
-index a3e81cc..624e0ed 100644
+index a3e81cc..ba05e0e 100644
 --- a/tests/startup.electron.js
 +++ b/tests/startup.electron.js
-@@ -636,7 +636,7 @@ app.on('web-contents-created', (_event, contents) => {
+@@ -30,7 +30,7 @@ function silentWav(seconds = 5) {
+   buffer.write('data', 36); buffer.writeUInt32LE(dataSize, 40); return buffer;
+ }
+ const errors = [];
+-setTimeout(() => { console.error('Production startup timed out', errors); app.exit(1); }, 45000);
++setTimeout(() => { console.error('Production startup timed out', errors); app.exit(1); }, 60000);
+ app.on('web-contents-created', (_event, contents) => {
+   contents.on('console-message', (details) => {
+     if (details.level === 'error') errors.push(`${details.message} (${details.sourceId}:${details.lineNumber})`);
+@@ -636,17 +636,17 @@ app.on('web-contents-created', (_event, contents) => {
              &&!document.getElementById('home-media-progress').hidden
              &&document.querySelector('.home-media').dataset.mediaPlaying==='true'
              &&document.querySelector('[data-home-media="toggle"]').getAttribute('aria-label')==='暂停';
 -          const audio=document.getElementById('home-music-audio'),progress=document.getElementById('home-media-progress'),progressMutations=[];const progressObserver=new MutationObserver((records)=>progressMutations.push(...records));progressObserver.observe(progress,{attributes:true,attributeFilter:['hidden'],attributeOldValue:true});document.querySelector('[data-home-media="next"]').click();await new Promise(resolve=>setTimeout(resolve,300));progressObserver.disconnect();const musicTrackSwitchStable=!progress.hidden&&!progressMutations.some(record=>record.oldValue===null)&&document.getElementById('home-media-title').textContent==='下一首测试歌曲'&&!audio.paused;
+-          const sourceBefore=audio.src;let emptied=0;audio.addEventListener('emptied',()=>{emptied+=1;});
+-          document.getElementById('home-media-library').click();await pause();const sourceSelect=document.getElementById('music-source-select');sourceSelect.value='catalog-test';sourceSelect.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(resolve=>setTimeout(resolve,300));
+-          const firstPlaylistPlaying=audio.src!==sourceBefore&&!audio.paused&&emptied>0&&document.getElementById('home-media-title').textContent==='晨光'&&document.getElementById('music-playlist-select').value==='morning';
 +          const audio=document.getElementById('home-music-audio'),progress=document.getElementById('home-media-progress'),progressMutations=[];const progressObserver=new MutationObserver((records)=>progressMutations.push(...records));progressObserver.observe(progress,{attributes:true,attributeFilter:['hidden'],attributeOldValue:true});document.querySelector('[data-home-media="next"]').click();let trackSwitchDeadline=performance.now()+3000;while((document.getElementById('home-media-title').textContent!=='下一首测试歌曲'||audio.paused)&&performance.now()<trackSwitchDeadline)await new Promise(resolve=>setTimeout(resolve,20));progressMutations.push(...progressObserver.takeRecords());progressObserver.disconnect();const musicTrackSwitchDebug={progressHidden:progress.hidden,hiddenTransitions:progressMutations.filter(record=>record.oldValue===null).length,title:document.getElementById('home-media-title').textContent,status:document.getElementById('home-media-status').textContent,paused:audio.paused,source:audio.currentSrc||audio.src||'',readyState:audio.readyState,networkState:audio.networkState,errorCode:audio.error?.code||0};const musicTrackSwitchStable=!musicTrackSwitchDebug.progressHidden&&musicTrackSwitchDebug.hiddenTransitions===0&&musicTrackSwitchDebug.title==='下一首测试歌曲'&&!musicTrackSwitchDebug.paused;
-           const sourceBefore=audio.src;let emptied=0;audio.addEventListener('emptied',()=>{emptied+=1;});
-           document.getElementById('home-media-library').click();await pause();const sourceSelect=document.getElementById('music-source-select');sourceSelect.value='catalog-test';sourceSelect.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(resolve=>setTimeout(resolve,300));
-           const firstPlaylistPlaying=audio.src!==sourceBefore&&!audio.paused&&emptied>0&&document.getElementById('home-media-title').textContent==='晨光'&&document.getElementById('music-playlist-select').value==='morning';
-@@ -715,9 +715,10 @@ app.on('web-contents-created', (_event, contents) => {
++          document.getElementById('home-media-library').click();await pause();const sourceSelect=document.getElementById('music-source-select');let sourceReadyDeadline=performance.now()+3000;while(sourceSelect.disabled&&performance.now()<sourceReadyDeadline)await new Promise(resolve=>setTimeout(resolve,20));sourceSelect.value='catalog-test';sourceSelect.dispatchEvent(new Event('change',{bubbles:true}));let sourceSwitchDeadline=performance.now()+3000;while((audio.paused||document.getElementById('home-media-title').textContent!=='晨光'||document.getElementById('music-playlist-select').value!=='morning')&&performance.now()<sourceSwitchDeadline)await new Promise(resolve=>setTimeout(resolve,20));
++          const firstPlaylistPlaying=!audio.paused&&document.getElementById('home-media-title').textContent==='晨光'&&document.getElementById('music-playlist-select').value==='morning';
+           const settingsCategoriesLoaded=document.getElementById('music-category-select').options.length===3;
+           const coverLoaded=!document.getElementById('home-media-cover').hidden&&document.querySelector('.home-media').dataset.mediaCover==='true';
+           document.getElementById('home-media-discover').click();await pause();const homeOnlineDiscovery=!document.getElementById('home-media-discovery').hidden&&document.getElementById('home-media-platform-select').options.length===1&&document.getElementById('home-media-category-select').options.length===3&&document.querySelectorAll('#home-media-online-results .home-media-online-result').length===1;document.querySelector('#home-media-online-results .home-media-online-result').click();await pause();const onlinePlaylistDisplayed=document.getElementById('home-media-queue-label').textContent.includes('在线精选');document.getElementById('home-media-discovery-close').click();document.querySelector('[data-music-catalog-view="mine"]').click();await pause();
+-          const playlistSelect=document.getElementById('music-playlist-select');audio.pause();await pause();playlistSelect.value='evening';playlistSelect.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(resolve=>setTimeout(resolve,300));
++          const playlistSelect=document.getElementById('music-playlist-select');audio.pause();await pause();let playlistReadyDeadline=performance.now()+3000;while(playlistSelect.disabled&&performance.now()<playlistReadyDeadline)await new Promise(resolve=>setTimeout(resolve,20));playlistSelect.value='evening';playlistSelect.dispatchEvent(new Event('change',{bubbles:true}));let playlistSwitchDeadline=performance.now()+3000;while((audio.paused||document.getElementById('home-media-title').textContent!=='夜航'||document.getElementById('home-media-source-label').textContent!=='聚合音乐'||document.querySelector('[data-music-source-panel="catalog"]').hidden)&&performance.now()<playlistSwitchDeadline)await new Promise(resolve=>setTimeout(resolve,20));
+           const musicPlaylistSwitch=firstPlaylistPlaying&&!audio.paused&&document.getElementById('home-media-title').textContent==='夜航'
+             &&document.getElementById('home-media-source-label').textContent==='聚合音乐'
+             &&!document.querySelector('[data-music-source-panel="catalog"]').hidden;
++          const musicPlaylistSwitchDebug={firstPlaylistPlaying,paused:audio.paused,title:document.getElementById('home-media-title').textContent,playlistId:playlistSelect.value,sourceLabel:document.getElementById('home-media-source-label').textContent,catalogHidden:document.querySelector('[data-music-source-panel="catalog"]').hidden,status:document.getElementById('home-media-status').textContent};
+           await window.NotchPanel.navigate({tab:'home'});await pause();
+           document.getElementById('home-chat-open').click();const input=document.getElementById('home-chat-input');const noImplicitHistory=!localStorage.getItem('notch-ai-chat-sessions-v1');
+           const markdownProbe=document.createElement('div');window.NotchMarkdown.render(markdownProbe,'<img src=x onerror="window.__markdownUnsafe=true">');const markdownSafe=!markdownProbe.querySelector('img')&&!window.__markdownUnsafe&&markdownProbe.textContent.includes('<img');
+@@ -715,9 +715,11 @@ app.on('web-contents-created', (_event, contents) => {
            dashboard.style.width='720px';
            fits=fits&&dashboard.scrollWidth<=dashboard.clientWidth+1&&[...dashboard.children].every(card=>card.scrollWidth<=card.clientWidth+1);
            dashboard.style.width='';
 -          return {saved,autoLink,manualNote,capturedLink,duplicateLinkPreserved,weather,weatherDetail,cleared,media,musicTrackSwitchStable,coverLoaded,homeOnlineDiscovery,settingsCategoriesLoaded,onlinePlaylistDisplayed,musicPlaylistSwitch,noImplicitHistory,markdownSafe,composerGrows,pickerOpened,pickerFits,clipImageExcluded,contextSelected,contextSent,contextFrozen,chatted,chatNoteSaved:Boolean(chatNoteSaved),chatNoteUndone,cancelled,recoverable:Boolean(recoverable),retryRecovered,readerEligibility,readerOpened,readerTodoNeedsSelection,readerFits,outlineMoved,readerFullCopied,readerCodeCopied,readerSelectionReady,readerSelectionCopied,readerNoteSaved,readerNoteUndone,readerTodoSource,readerTodoPreview,readerTodoAppliedUndone,readerReturned,readerFocusRestored,readerClosed,readerFullTodoReady,readerFullTodoSource,readerFullTodoFocusRestored,saveDisclosure,sessionSaved,sessionRenamed,sessionSearchWorks,sessionRestored,sessionPanelFits,chatFits,recoverDebug,clearChat,classicRemoved,fits};
-+          return {saved,autoLink,manualNote,capturedLink,duplicateLinkPreserved,weather,weatherDetail,cleared,media,musicTrackSwitchStable,musicTrackSwitchDebug,coverLoaded,homeOnlineDiscovery,settingsCategoriesLoaded,onlinePlaylistDisplayed,musicPlaylistSwitch,noImplicitHistory,markdownSafe,composerGrows,pickerOpened,pickerFits,clipImageExcluded,contextSelected,contextSent,contextFrozen,chatted,chatNoteSaved:Boolean(chatNoteSaved),chatNoteUndone,cancelled,recoverable:Boolean(recoverable),retryRecovered,readerEligibility,readerOpened,readerTodoNeedsSelection,readerFits,outlineMoved,readerFullCopied,readerCodeCopied,readerSelectionReady,readerSelectionCopied,readerNoteSaved,readerNoteUndone,readerTodoSource,readerTodoPreview,readerTodoAppliedUndone,readerReturned,readerFocusRestored,readerClosed,readerFullTodoReady,readerFullTodoSource,readerFullTodoFocusRestored,saveDisclosure,sessionSaved,sessionRenamed,sessionSearchWorks,sessionRestored,sessionPanelFits,chatFits,recoverDebug,clearChat,classicRemoved,fits};
++          return {saved,autoLink,manualNote,capturedLink,duplicateLinkPreserved,weather,weatherDetail,cleared,media,musicTrackSwitchStable,musicTrackSwitchDebug,coverLoaded,homeOnlineDiscovery,settingsCategoriesLoaded,onlinePlaylistDisplayed,musicPlaylistSwitch,musicPlaylistSwitchDebug,noImplicitHistory,markdownSafe,composerGrows,pickerOpened,pickerFits,clipImageExcluded,contextSelected,contextSent,contextFrozen,chatted,chatNoteSaved:Boolean(chatNoteSaved),chatNoteUndone,cancelled,recoverable:Boolean(recoverable),retryRecovered,readerEligibility,readerOpened,readerTodoNeedsSelection,readerFits,outlineMoved,readerFullCopied,readerCodeCopied,readerSelectionReady,readerSelectionCopied,readerNoteSaved,readerNoteUndone,readerTodoSource,readerTodoPreview,readerTodoAppliedUndone,readerReturned,readerFocusRestored,readerClosed,readerFullTodoReady,readerFullTodoSource,readerFullTodoFocusRestored,saveDisclosure,sessionSaved,sessionRenamed,sessionSearchWorks,sessionRestored,sessionPanelFits,chatFits,recoverDebug,clearChat,classicRemoved,fits};
          })()`);
          assert.equal(homeAudit.recoverable,true,JSON.stringify(homeAudit.recoverDebug));delete homeAudit.recoverDebug;
 +        assert.equal(homeAudit.musicTrackSwitchStable,true,JSON.stringify(homeAudit.musicTrackSwitchDebug));delete homeAudit.musicTrackSwitchDebug;
++        assert.equal(homeAudit.musicPlaylistSwitch,true,JSON.stringify(homeAudit.musicPlaylistSwitchDebug));delete homeAudit.musicPlaylistSwitchDebug;
          assert.deepEqual(homeAudit,{saved:true,autoLink:true,manualNote:true,capturedLink:true,duplicateLinkPreserved:true,weather:true,weatherDetail:true,cleared:true,media:true,musicTrackSwitchStable:true,coverLoaded:true,homeOnlineDiscovery:true,settingsCategoriesLoaded:true,onlinePlaylistDisplayed:true,musicPlaylistSwitch:true,noImplicitHistory:true,markdownSafe:true,composerGrows:true,pickerOpened:true,pickerFits:true,clipImageExcluded:true,contextSelected:true,contextSent:true,contextFrozen:true,chatted:true,chatNoteSaved:true,chatNoteUndone:true,cancelled:true,recoverable:true,retryRecovered:true,readerEligibility:true,readerOpened:true,readerTodoNeedsSelection:true,readerFits:true,outlineMoved:true,readerFullCopied:true,readerCodeCopied:true,readerSelectionReady:true,readerSelectionCopied:true,readerNoteSaved:true,readerNoteUndone:true,readerTodoSource:true,readerTodoPreview:true,readerTodoAppliedUndone:true,readerReturned:true,readerFocusRestored:true,readerClosed:true,readerFullTodoReady:true,readerFullTodoSource:true,readerFullTodoFocusRestored:true,saveDisclosure:true,sessionSaved:true,sessionRenamed:true,sessionSearchWorks:true,sessionRestored:true,sessionPanelFits:true,chatFits:true,clearChat:true,classicRemoved:true,fits:true});
          assert.equal(await clipboard.readText(),'明晚九点前提交测试报告');
          await contents.executeJavaScript("window.__startupTestStage='reader-keyboard-setup'");
+diff --git a/tests/window-geometry.test.js b/tests/window-geometry.test.js
+index 5a58864..f6d7135 100644
+--- a/tests/window-geometry.test.js
++++ b/tests/window-geometry.test.js
+@@ -36,6 +36,21 @@ test('window geometry projects layout metrics from the injected display policy',
+   });
+ });
+ 
++test('window geometry projects metrics from an explicit target display', () => {
++  const geometry = createGeometry();
++  const targetDisplay = {
++    bounds: { x: 1440, y: 0, width: 1728, height: 1117 },
++    workArea: { x: 1440, y: 38, width: 1728, height: 1079 },
++  };
++  assert.deepEqual(geometry.getLayoutMetrics(targetDisplay), {
++    stripHeight: 38,
++    notchHeight: 38,
++    menuBarHeight: 38,
++    chromeY: 76,
++    tabSizes: { home: { width: 1240, panelHeight: 540 } },
++  });
++});
++
+ test('window geometry keeps Windows collapsed height independent of work area menu offset', () => {
+   const geometry = createGeometry('win32');
+   assert.equal(geometry.getLayoutMetrics().stripHeight, 38);
+diff --git a/tests/window-ipc.test.js b/tests/window-ipc.test.js
+index 624026e..faffc7d 100644
+--- a/tests/window-ipc.test.js
++++ b/tests/window-ipc.test.js
+@@ -17,6 +17,7 @@ test('window IPC registers the stable window and hover status contract', async (
+     setMode: (mode) => { events.push(['mode', mode]); return 'mode-result'; },
+     beginCollapse: () => { events.push(['collapse']); return 'collapse-result'; },
+     setCollapsedHover: (value) => events.push(['hover', value]),
++    setTextInputActive: (value) => events.push(['text-input', value]),
+     getMetrics: () => ({ stripHeight: 24 }),
+     keepOpen: () => events.push(['keep-open']),
+     setTab: (tab) => { events.push(['tab', tab]); return 'tab-result'; },
+@@ -24,15 +25,18 @@ test('window IPC registers the stable window and hover status contract', async (
+   });
+   assert.deepEqual([...handlers.keys()], [
+     'window:set-mode', 'window:begin-collapse', 'window:set-collapsed-hover',
++    'window:set-text-input-active',
+     'window:metrics', 'window:keep-open', 'window:set-tab', 'shortcut:hover-space-status',
+   ]);
+   assert.equal(await handlers.get('window:set-mode')({ sender: mainSender }, 'expanded'), 'mode-result');
+   assert.equal(await handlers.get('window:set-mode')({ sender: otherSender }, 'expanded'), undefined);
+   assert.equal(await handlers.get('window:begin-collapse')({ sender: otherSender }), undefined);
+   handlers.get('window:set-collapsed-hover')({ sender: mainSender }, true);
++  handlers.get('window:set-text-input-active')({ sender: otherSender }, true);
++  handlers.get('window:set-text-input-active')({ sender: mainSender }, true);
+   handlers.get('window:keep-open')({ sender: mainSender });
+   assert.deepEqual(await handlers.get('window:metrics')({ sender: mainSender }), { stripHeight: 24 });
+   assert.equal(await handlers.get('window:set-tab')({ sender: mainSender }, 'notes'), 'tab-result');
+   assert.deepEqual(await handlers.get('shortcut:hover-space-status')({ sender: mainSender }), { registered: false });
+-  assert.deepEqual(events, [['mode', 'expanded'], ['hover', true], ['keep-open'], ['tab', 'notes']]);
++  assert.deepEqual(events, [['mode', 'expanded'], ['hover', true], ['text-input', true], ['keep-open'], ['tab', 'notes']]);
+ });

@@ -4,6 +4,7 @@ function registerWindowIpc({
   setMode,
   beginCollapse,
   setCollapsedHover,
+  setTextInputActive,
   getMetrics,
   keepOpen,
   setTab,
@@ -19,6 +20,9 @@ function registerWindowIpc({
   });
   ipcMain.on('window:set-collapsed-hover', (event, hovering) => {
     if (isMainWindowSender(event.sender)) setCollapsedHover(hovering === true);
+  });
+  ipcMain.on('window:set-text-input-active', (event, active) => {
+    if (isMainWindowSender(event.sender)) setTextInputActive(active === true);
   });
   ipcMain.handle('window:metrics', (event) => {
     if (!isMainWindowSender(event.sender)) return undefined;

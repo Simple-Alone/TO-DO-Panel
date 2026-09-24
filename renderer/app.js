@@ -318,6 +318,31 @@ panel.addEventListener('click', (e) => {
   e.stopPropagation();
 });
 
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button', 'checkbox', 'color', 'date', 'datetime-local', 'file', 'hidden', 'image',
+  'month', 'number', 'radio', 'range', 'reset', 'submit', 'time', 'week',
+]);
+let reportedTextInputActive = false;
+
+function isTextInputElement(element) {
+  if (!(element instanceof Element)) return false;
+  const editable = element.closest('textarea, input, [contenteditable]:not([contenteditable="false"])');
+  if (!editable || editable.disabled || editable.readOnly) return false;
+  if (editable.matches('[contenteditable]')) return true;
+  return editable.tagName === 'TEXTAREA'
+    || (editable.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has(editable.type));
+}
+
+function syncTextInputWindowLayer() {
+  const active = isTextInputElement(document.activeElement);
+  if (active === reportedTextInputActive) return;
+  reportedTextInputActive = active;
+  window.notchAPI?.setTextInputActive?.(active);
+}
+
+document.addEventListener('focusin', syncTextInputWindowLayer, true);
+document.addEventListener('focusout', () => queueMicrotask(syncTextInputWindowLayer), true);
+
 // Esc 收起面板（菜单栏会拦截顶部刘海条的点击，给收起多一条可靠路径）；
 // 焦点在输入框/速记里时，第一次 Esc 只退出输入。
 // Escape 不会原生到达页面（被浏览器层吞掉），由主进程 before-input-event 转发

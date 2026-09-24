@@ -36,6 +36,21 @@ test('window geometry projects layout metrics from the injected display policy',
   });
 });
 
+test('window geometry projects metrics from an explicit target display', () => {
+  const geometry = createGeometry();
+  const targetDisplay = {
+    bounds: { x: 1440, y: 0, width: 1728, height: 1117 },
+    workArea: { x: 1440, y: 38, width: 1728, height: 1079 },
+  };
+  assert.deepEqual(geometry.getLayoutMetrics(targetDisplay), {
+    stripHeight: 38,
+    notchHeight: 38,
+    menuBarHeight: 38,
+    chromeY: 76,
+    tabSizes: { home: { width: 1240, panelHeight: 540 } },
+  });
+});
+
 test('window geometry keeps Windows collapsed height independent of work area menu offset', () => {
   const geometry = createGeometry('win32');
   assert.equal(geometry.getLayoutMetrics().stripHeight, 38);

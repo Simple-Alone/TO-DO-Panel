@@ -146,6 +146,7 @@ const {
   collapsedDisplayFollowPolicy,
   collapsedDisplayRelocationPolicy,
   panelBlurCollapsePolicy,
+  mainWindowLayerPolicy,
   isValidShortcutAccelerator,
   shortcutAssignmentConflict,
   reduceClipboardObservation,
@@ -262,6 +263,8 @@ let hideWhenCollapsed = false;
 let isQuitting = false;
 let mediaPermissionRequests = 0;
 let transientSystemInteractionRequests = 0;
+let textInputActive = false;
+let appliedMainWindowLayer = '';
 const mediaPermissionCoordinator = createForegroundMediaPermissionCoordinator();
 
 let notificationWindow = null;
@@ -328,6 +331,20 @@ function cancelCollapseWatchdog() {
   }
 }
 
+function syncMainWindowLayer() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const policy = mainWindowLayerPolicy({
+    platform: process.platform,
+    textInputActive,
+    systemPromptActive: mediaPermissionRequests > 0,
+  });
+  const identity = `${policy.alwaysOnTop}:${policy.level}`;
+  if (identity === appliedMainWindowLayer) return;
+  if (policy.alwaysOnTop) mainWindow.setAlwaysOnTop(true, policy.level);
+  else mainWindow.setAlwaysOnTop(false);
+  appliedMainWindowLayer = identity;
+}
+
 function applyMode(mode, display) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   cancelCollapseWatchdog();
@@ -336,6 +353,8 @@ function applyMode(mode, display) {
   applyWindowGeometry(mode, display);
   mainWindow.setIgnoreMouseEvents(false);
   currentMode = mode;
+  if (mode === 'collapsed') textInputActive = false;
+  syncMainWindowLayer();
   if (mode === 'expanded') hideWhenCollapsed = false;
   if (mode === 'collapsed' && hideWhenCollapsed) {
     hideWhenCollapsed = false;
@@ -354,6 +373,11 @@ function cancelDisplayRelocation(restoreOpacity = true) {
   if (restoreOpacity && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOpacity(1);
 }
 
+function syncWindowLayoutMetrics(display) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('window:metrics-changed', getLayoutMetrics(display));
+}
+
 function repositionWindow(display) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const currentDisplay = getWindowDisplay();
@@ -365,6 +389,7 @@ function repositionWindow(display) {
   });
   if (!policy.conceal) {
     applyWindowGeometry(currentMode, display);
+    if (display?.id !== undefined && display.id !== currentDisplay.id) syncWindowLayoutMetrics(display);
     return;
   }
 
@@ -375,6 +400,7 @@ function repositionWindow(display) {
   if (displayRelocationTimer) clearTimeout(displayRelocationTimer);
   target.setOpacity(0);
   applyWindowGeometry('collapsed', display);
+  syncWindowLayoutMetrics(display);
   displayRelocationTimer = setTimeout(() => {
     if (generation !== displayRelocationGeneration || mainWindow !== target || target.isDestroyed()) return;
     displayRelocationTimer = null;
@@ -616,7 +642,8 @@ function createWindow() {
   const rendererOwnerId = mainWindow.webContents.id;
   mainWindow.webContents.on('render-process-gone', () => aiModelService?.cancelOwner(rendererOwnerId));
 
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  appliedMainWindowLayer = '';
+  syncMainWindowLayer();
   if (process.platform === 'darwin') mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   if (process.platform === 'win32') mainWindow.setMenu(null);
 
@@ -640,6 +667,8 @@ function createWindow() {
   mainWindow.on('hide', () => {
     cancelPanelBlurCollapse();
     cancelDisplayRelocation();
+    textInputActive = false;
+    syncMainWindowLayer();
     syncHoverSpacePolling();
     syncDisplayFollowPolling();
   });
@@ -658,6 +687,8 @@ function createWindow() {
     cancelCollapseWatchdog();
     cancelDisplayRelocation(false);
     hideWhenCollapsed = false;
+    textInputActive = false;
+    appliedMainWindowLayer = '';
     mainWindow = null;
     stopDisplayFollowPolling();
   });
@@ -1187,6 +1218,11 @@ registerWindowIpc({
     windowsCollapsedHovering = hovering;
     applyWindowGeometry('collapsed');
   },
+  setTextInputActive: (active) => {
+    if (process.platform !== 'darwin') return;
+    textInputActive = active === true && currentMode !== 'collapsed';
+    syncMainWindowLayer();
+  },
   getMetrics: windowGeometry.getLayoutMetrics,
   keepOpen: () => {
     cancelPanelBlurCollapse();
@@ -1214,6 +1250,7 @@ async function requestMacMediaAccess(mediaType) {
     activate: () => app.focus({ steal: true }),
     track: (delta) => {
       mediaPermissionRequests = Math.max(0, mediaPermissionRequests + delta);
+      syncMainWindowLayer();
     },
     request: () => systemPreferences.askForMediaAccess(mediaType),
   });

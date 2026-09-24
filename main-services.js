@@ -556,6 +556,15 @@ function panelBlurCollapsePolicy({ mode, windowFocused, guarded } = {}) {
   };
 }
 
+function mainWindowLayerPolicy({ platform, textInputActive, systemPromptActive } = {}) {
+  if (platform !== 'darwin') return { alwaysOnTop: true, level: 'screen-saver' };
+  if (systemPromptActive === true) return { alwaysOnTop: false, level: 'normal' };
+  return {
+    alwaysOnTop: true,
+    level: textInputActive === true ? 'floating' : 'screen-saver',
+  };
+}
+
 function isValidShortcutAccelerator(shortcut, { allowEmpty = false, allowSpace = false } = {}) {
   if (shortcut === '') return allowEmpty;
   if (shortcut === 'Space') return allowSpace;
@@ -651,6 +660,7 @@ module.exports = {
   collapsedDisplayFollowPolicy,
   collapsedDisplayRelocationPolicy,
   panelBlurCollapsePolicy,
+  mainWindowLayerPolicy,
   isValidShortcutAccelerator,
   shortcutAcceleratorIdentity,
   shortcutAssignmentConflict,

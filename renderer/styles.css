@@ -80,6 +80,9 @@ body {
   height: var(--notch-h, 38px);
   align-items: flex-end;
   padding-bottom: 2px;
+  transition:
+    border-radius var(--d-base) var(--ease-out),
+    background var(--d-fast) var(--ease-out);
 }
 
 /* 刘海脱离布局流：退场时不再向上拖动面板，黑色外壳始终贴住屏幕顶部。 */
@@ -229,7 +232,7 @@ body {
   opacity: 0;
   transition:
     clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay),
-    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay);
+    opacity var(--d-island-close) var(--ease-out) var(--d-island-close-delay);
 }
 
 #app.closing .panel > .topbar,

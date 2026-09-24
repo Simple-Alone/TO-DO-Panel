@@ -34,6 +34,7 @@ const {
   collapsedDisplayFollowPolicy,
   collapsedDisplayRelocationPolicy,
   panelBlurCollapsePolicy,
+  mainWindowLayerPolicy,
   isValidShortcutAccelerator,
   shortcutAcceleratorIdentity,
   shortcutAssignmentConflict,
@@ -228,6 +229,29 @@ test('panel blur collapses only after the window stays unfocused', () => {
   assert.equal(panelBlurCollapsePolicy({ mode: 'expanded', windowFocused: true, guarded: false }).collapse, false);
   assert.equal(panelBlurCollapsePolicy({ mode: 'expanded', windowFocused: false, guarded: true }).collapse, false);
   assert.equal(panelBlurCollapsePolicy({ mode: 'launcher', windowFocused: false, guarded: false }).closeLauncher, true);
+});
+
+test('macOS lowers the panel below IME and system prompts only while needed', () => {
+  assert.deepEqual(mainWindowLayerPolicy({ platform: 'darwin' }), {
+    alwaysOnTop: true,
+    level: 'screen-saver',
+  });
+  assert.deepEqual(mainWindowLayerPolicy({ platform: 'darwin', textInputActive: true }), {
+    alwaysOnTop: true,
+    level: 'floating',
+  });
+  assert.deepEqual(mainWindowLayerPolicy({
+    platform: 'darwin',
+    textInputActive: true,
+    systemPromptActive: true,
+  }), {
+    alwaysOnTop: false,
+    level: 'normal',
+  });
+  assert.deepEqual(mainWindowLayerPolicy({ platform: 'win32', textInputActive: true }), {
+    alwaysOnTop: true,
+    level: 'screen-saver',
+  });
 });
 
 test('global shortcut policy validates optional actions and detects in-app conflicts', () => {
