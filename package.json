@@ -1,6 +1,6 @@
 {
   "name": "dynamic-panel",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Dynamic Panel - a local desktop workspace for macOS and Windows",
   "main": "main.js",
   "author": "xiaopu-ai",

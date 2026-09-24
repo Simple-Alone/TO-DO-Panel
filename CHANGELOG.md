@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [1.2.1] - 2026-09-24
+
 ### 桌面
 
 - 修复 macOS 面板失焦收起时外壳过早消失、短暂露出白色窗口底色的问题；外壳现在会随收起轮廓同步退场。
@@ -180,7 +182,8 @@
 
 - 首个稳定版本，建立固定命名的 Apple Silicon DMG 发布流程。
 
-[未发布]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.0...HEAD
+[未发布]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Simple-Alone/TO-DO-Panel/releases/tag/v1.2.0
 [1.1.0]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.7...v1.1.0
 [1.0.7]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.6...v1.0.7

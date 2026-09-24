@@ -2,10 +2,16 @@
 
 | 电脑 | 下载文件 | 安装方式 |
 | --- | --- | --- |
-| Mac · Apple Silicon · macOS 13+ | [下载 macOS 安装包（.dmg）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.0/Dynamic-Panel-1.2.0-arm64.dmg) | 打开 DMG，将应用拖入「应用程序」 |
-| Windows 10/11 · Intel / AMD 64 位（x64） | [下载 Windows 安装包（.exe）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.0/Dynamic-Panel-1.2.0-windows-x64-setup.exe) | 双击 EXE，按安装向导完成安装 |
+| Mac · Apple Silicon · macOS 13+ | [下载 macOS 安装包（.dmg）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.1/Dynamic-Panel-1.2.1-arm64.dmg) | 打开 DMG，将应用拖入「应用程序」 |
+| Windows 10/11 · Intel / AMD 64 位（x64） | [下载 Windows 安装包（.exe）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.1/Dynamic-Panel-1.2.1-windows-x64-setup.exe) | 双击 EXE，按安装向导完成安装 |
 
 Release 同时提供两个安装包对应的 `.sha256` 完整性校验文件。
+
+## 1.2.1
+
+- 修复 macOS 面板失焦收起时外壳过早消失、短暂露出白色窗口底色的问题。
+- 修复 macOS 文本输入时输入法候选窗口可能被主面板遮挡的问题。
+- 修复折叠刘海跨显示器移动后抓握横杠偶尔消失的问题，并同步不同显示器的菜单栏高度。
 
 ## 1.2.0
 

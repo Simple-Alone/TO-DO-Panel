@@ -52,12 +52,12 @@ macOS 折叠态贴合屏幕顶部，“小”档跟随菜单栏高度；Windows 
 
 ## 下载安装
 
-当前稳定版本为 **1.2.0**。请选择与系统匹配的安装包：
+当前稳定版本为 **1.2.1**。请选择与系统匹配的安装包：
 
 | 平台 | 安装包 | 完整性校验 |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-arm64.dmg) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-arm64.dmg.sha256) |
-| Windows 10/11 · x64 | [下载安装程序](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-windows-x64-setup.exe) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.0-windows-x64-setup.exe.sha256) |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.1-arm64.dmg) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.1-arm64.dmg.sha256) |
+| Windows 10/11 · x64 | [下载安装程序](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.1-windows-x64-setup.exe) | [SHA-256](https://github.com/Simple-Alone/TO-DO-Panel/releases/latest/download/Dynamic-Panel-1.2.1-windows-x64-setup.exe.sha256) |
 
 [查看全部 GitHub Releases](https://github.com/Simple-Alone/TO-DO-Panel/releases) 。
 
