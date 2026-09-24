@@ -411,6 +411,31 @@ index 9c12f07..7b346e6 100644
  test('extension permissions allow private data but deny outside IO, code writes and child processes',async()=>{
    const root=await fs.mkdtemp(path.join(os.tmpdir(),'launcher-permissions-'));
    try{
+diff --git a/tests/launcher.test.js b/tests/launcher.test.js
+index 0ed6d9f..e22496e 100644
+--- a/tests/launcher.test.js
++++ b/tests/launcher.test.js
+@@ -53,7 +53,10 @@ test('local extension installs, queries and executes; disabled or removed result
+     assert.equal(service.target(dynamic.id), undefined);
+     await service.uninstall(example.id);
+     assert.equal((await service.list()).length, 0);
+-  } finally { service.cancel(); await fs.rm(root, { recursive: true, force: true }); }
++  } finally {
++    await service.cancel();
++    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
++  }
+ });
+ 
+ test('extension process errors, cancellation and timeout settle without blocking the host', async () => {
+@@ -67,5 +70,7 @@ test('extension process errors, cancellation and timeout settle without blocking
+     const request = queryExtension(root, manifest, 'upper', '', abort.signal);
+     abort.abort(); await assert.rejects(request, /cancelled/);
+     await assert.rejects(queryExtension(root, manifest, 'upper', '', undefined), /extension_timeout/);
+-  } finally { await fs.rm(root, { recursive: true, force: true }); }
++  } finally {
++    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
++  }
+ });
 diff --git a/tests/main-services.test.js b/tests/main-services.test.js
 index af20f9a..275c4f3 100644
 --- a/tests/main-services.test.js
