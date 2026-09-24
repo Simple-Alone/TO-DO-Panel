@@ -30,4 +30,4 @@
 - 2026-09-24：Electron 渲染交互测试通过，横杠在 `24px` 和 `38px` 折叠高度下均保持底部 `2px` 间距。
 - 2026-09-24：完整单元测试 `499` 项通过、`0` 项失败、`3` 项按平台跳过；完整 Electron 流程运行至通知窗口测试时，因已安装的 Dynamic Panel 占用 `127.0.0.1:43821` 而停止。
 - 2026-09-24：`fix-macos-build.patch` 已通过当前工作树反向应用检查。
-- 2026-09-24：GitHub Actions macOS 作业完整通过；Windows 作业定位到测试临时目录清理 `EBUSY`，修复后启动器定向测试 `5` 项通过，等待 Windows Actions 复验。
+- 2026-09-24：GitHub Actions 运行 `35978805275` 完整通过；macOS 完成 DMG 构建、校验和与 Artifact 上传，Windows 完成测试、安装包构建、安装验证与 Artifact 上传，普通 `main` 提交未发布 Release。
