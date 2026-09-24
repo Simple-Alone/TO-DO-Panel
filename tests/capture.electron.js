@@ -37,11 +37,13 @@ async function main() {
   await owner.loadFile(path.join(__dirname, 'capture-owner.html'));
   const execute = (code) => owner.webContents.executeJavaScript(code);
   const unwrap = (reply) => { assert.equal(reply.ok, true, JSON.stringify(reply)); return reply.value; };
+  const captureWindow = () => BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().split('?')[0].endsWith('/renderer/captureWindow.html'));
   const recordingControl = () => BrowserWindow.getAllWindows().find((candidate) => candidate.getTitle() === '录屏状态 · Dynamic Panel');
   async function open(mode, denied = false, request = null) {
     if (request) await service.open(request);
     else unwrap(await execute(`window.notchAPI.openCapture('${mode}')`));
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate !== owner);
+    const win = captureWindow();
+    assert.ok(win, 'Capture window did not open');
     await until(() => win.webContents.executeJavaScript(`document.querySelectorAll('.source').length === 1`), 'Source picker did not populate');
     await win.webContents.executeJavaScript(`document.querySelector('.source').click()`);
     await until(() => win.webContents.executeJavaScript(`!document.getElementById('start').disabled`), 'Source selection not acknowledged');
@@ -77,8 +79,10 @@ async function main() {
         const output = context.createMediaStreamDestination(); oscillator.connect(output); oscillator.start();
         window.syntheticAudioContext = context; return output.stream;
       };
-      document.getElementById('start').click();
+      true;
     `, true);
+    // A denied request destroys this window before executeJavaScript can reply.
+    void win.webContents.executeJavaScript(`document.getElementById('start').click()`).catch(() => {});
     return win;
   }
   markStage('initial screenshot');
@@ -97,7 +101,8 @@ async function main() {
   sourceThumbnail = await owner.webContents.capturePage();
   const directWidth = sourceThumbnail.getSize().width, directHeight = sourceThumbnail.getSize().height;
   unwrap(await execute(`window.notchAPI.openCapture('screenshot')`));
-  const directWindow = BrowserWindow.getAllWindows().find((candidate) => candidate !== owner);
+  const directWindow = captureWindow();
+  assert.ok(directWindow, 'Direct screenshot window did not open');
   await until(() => directWindow.webContents.executeJavaScript(`document.body.classList.contains('direct-screenshot') && !document.getElementById('cropper').hidden`), 'Direct screenshot overlay did not open');
   assert.equal(await directWindow.webContents.executeJavaScript(`document.getElementById('picker').hidden`), true, 'Direct screenshot must skip the source picker');
   const beforeDirectEdit = new CaptureStorage(root).list().length;
@@ -132,7 +137,8 @@ async function main() {
   markStage('saved screenshot editing');
   const beforeLibraryEdit = new CaptureStorage(root).list();
   unwrap(await execute(`window.notchAPI.editCapture('${directImage.id}')`));
-  const libraryEditWindow = BrowserWindow.getAllWindows().find((candidate) => candidate !== owner);
+  const libraryEditWindow = captureWindow();
+  assert.ok(libraryEditWindow, 'Saved screenshot editor did not open');
   await until(() => libraryEditWindow.webContents.executeJavaScript(`!document.getElementById('annotation-toolbar').hidden`), 'Saved screenshot editor did not open');
   await libraryEditWindow.webContents.executeJavaScript(`(() => {
     const tool = document.querySelector('[data-tool="arrow"]'); tool.click();
