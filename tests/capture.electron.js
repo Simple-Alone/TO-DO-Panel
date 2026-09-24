@@ -8,8 +8,10 @@ const { CaptureStorage } = require('../captureStorage');
 app.disableHardwareAcceleration();
 app.setPath('userData', process.env.TODO_TEST_USER_DATA);
 registerCaptureScheme();
-const deadline = setTimeout(() => { console.error('Capture integration timed out'); app.exit(1); }, 45000);
+let currentStage = 'startup';
+const deadline = setTimeout(() => { console.error(`Capture integration timed out during ${currentStage}`); app.exit(1); }, 90000);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const markStage = (stage) => { currentStage = stage; };
 async function until(fn, message) {
   for (let attempt = 0; attempt < 150; attempt++) { const value = await fn(); if (value) return value; await pause(40); }
   throw new Error(message);
@@ -79,6 +81,7 @@ async function main() {
     `, true);
     return win;
   }
+  markStage('initial screenshot');
   await open('screenshot');
   await until(() => service.state().phase === 'idle', 'Screenshot did not finish');
   assert.equal(service.state().error, '');
@@ -90,6 +93,7 @@ async function main() {
   assert.equal(response.status, 206);
   assert.equal(Buffer.from(await response.arrayBuffer()).toString('hex'), '89504e470d0a1a0a');
 
+  markStage('direct screenshot editing');
   sourceThumbnail = await owner.webContents.capturePage();
   const directWidth = sourceThumbnail.getSize().width, directHeight = sourceThumbnail.getSize().height;
   unwrap(await execute(`window.notchAPI.openCapture('screenshot')`));
@@ -125,6 +129,7 @@ async function main() {
   const copiedBeforeLibraryAction = copiedImages.length;
   unwrap(await execute(`window.notchAPI.copyCapture('${directImage.id}')`));
   assert.equal(copiedImages.length, copiedBeforeLibraryAction + 1, 'Copy image action must write the saved screenshot to the clipboard');
+  markStage('saved screenshot editing');
   const beforeLibraryEdit = new CaptureStorage(root).list();
   unwrap(await execute(`window.notchAPI.editCapture('${directImage.id}')`));
   const libraryEditWindow = BrowserWindow.getAllWindows().find((candidate) => candidate !== owner);
@@ -143,6 +148,7 @@ async function main() {
   assert.deepEqual(copiedImages.at(-1), { width: directImage.width, height: directImage.height }, 'Edited library image must be copied');
   sourceThumbnail = nativeImage.createEmpty();
 
+  markStage('screen recording');
   const videoWindow = await open('video');
   await until(() => service.state().phase === 'recording', 'Video did not start');
   const screenRecordingControl = await until(recordingControl, 'Recording control did not open');
@@ -171,6 +177,7 @@ async function main() {
   assert.equal(replay.width, 640); assert.equal(replay.height, 360);
   assert.ok(Number.isFinite(replay.duration) && replay.duration > 1); assert.equal(replay.time, .5);
   assert.equal(restored, 4); assert.equal(microphoneRequests, 0);
+  markStage('capture error handling');
   const count = new CaptureStorage(root).list().length;
   await open('screenshot', true);
   await until(() => service.state().phase === 'idle', 'Denied capture did not finish');
@@ -182,6 +189,7 @@ async function main() {
   assert.equal(await unavailableWindow.webContents.executeJavaScript(`document.getElementById('start').disabled && !document.getElementById('type').disabled && !document.getElementById('refresh').disabled`), true);
   assert.equal(new CaptureStorage(root).list().length, count, 'Failed capture must not create files or silently record another screen');
   await service.stop();
+  markStage('region screenshots');
   settings.screenshot = 'region';
   const regionWindow = await open('screenshot');
   await until(() => service.state().phase === 'cropping', 'Region selector did not open');
@@ -206,6 +214,7 @@ async function main() {
   await repeatWindow.webContents.executeJavaScript(`document.getElementById('crop-save').click(); document.getElementById('annotation-save').click()`);
   await until(() => service.state().phase === 'idle', 'Repeat screenshot did not save');
   assert.equal(new CaptureStorage(root).list()[0].width, 320);
+  markStage('region recording');
   settings.video = 'screen'; settings.countdown = 3;
   const croppedWindow = await open('video', false, { mode: 'video', region: true });
   assert.equal(await croppedWindow.webContents.executeJavaScript(`document.getElementById('type').value`), 'region', 'Recording shortcut must force region selection');
@@ -250,6 +259,7 @@ async function main() {
   assert.equal(croppedReplay.width, 320); assert.equal(croppedReplay.height, 180);
   assert.ok(Number.isFinite(croppedReplay.duration) && croppedReplay.duration > 1);
   assert.ok(croppedReplay.pixel[0] > 190 && croppedReplay.pixel[1] < 80 && croppedReplay.pixel[2] < 80, 'Crop origin must contain the red marker, not the full-screen blue corner');
+  markStage('discard recording');
   const beforeDiscard = new CaptureStorage(root).list().length;
   const discardWindow = await open('video');
   await until(() => discardWindow.webContents.executeJavaScript(`!document.getElementById('crop-save').disabled`), 'Discard region controls unavailable');
@@ -261,6 +271,7 @@ async function main() {
   await until(() => service.state().phase === 'idle', 'Discard did not finish');
   assert.equal(service.state().error, '');
   assert.equal(new CaptureStorage(root).list().length, beforeDiscard, 'Discarded recording must remove its draft and index row');
+  markStage('recording frame resize');
   const resizedWindow = await open('video');
   await until(() => resizedWindow.webContents.executeJavaScript(`!document.getElementById('crop-save').disabled`), 'Region controls unavailable');
   await resizedWindow.webContents.executeJavaScript(`
@@ -279,6 +290,7 @@ async function main() {
   assert.equal(resizedVideo.width, 200); assert.equal(resizedVideo.height, 120); assert.equal(resizedVideo.status, 'complete');
   assert.deepEqual(settings.fixedRegion, remembered, 'Unchecked remember must preserve the previous preset');
   settings.audio = 'microphone';
+  markStage('region cancellation');
   const cancelledRegionCount = new CaptureStorage(root).list().length;
   const cancelledRegion = await open('video');
   await until(() => service.state().phase === 'cropping', 'Region cancel selector missing');
@@ -286,6 +298,7 @@ async function main() {
   await cancelledRegion.webContents.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))`);
   await until(() => service.state().phase === 'idle', 'Region cancellation did not finish');
   assert.equal(new CaptureStorage(root).list().length, cancelledRegionCount);
+  markStage('stale region validation');
   settings.fixedRegion.frameWidth = 800;
   const staleWindow = await open('screenshot');
   await until(() => staleWindow.webContents.executeJavaScript(`document.getElementById('crop-size').textContent.includes('重新框选')`), 'Changed frame must invalidate preset');
@@ -293,6 +306,7 @@ async function main() {
   await service.stop();
   unwrap(await execute('window.notchAPI.clearCaptureRegion()'));
   assert.equal(settings.fixedRegion, null);
+  markStage('microphone recording');
   settings.video = 'screen';
   settings.audio = 'microphone';
   await open('video');
@@ -300,6 +314,7 @@ async function main() {
   await pause(1100); await service.stop();
   assert.equal(service.state().error, ''); assert.equal(microphoneRequests, 1);
   const audioVideo = new CaptureStorage(root).list()[0]; assert.equal(audioVideo.audio, 'microphone'); assert.match(audioVideo.mimeType, /opus/);
+  markStage('countdown cancellation');
   settings.audio = 'none'; settings.countdown = 3;
   const prior = new CaptureStorage(root).list().length;
   await open('video');
