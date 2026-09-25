@@ -11,6 +11,10 @@
     };
   }
 
+  function mainWindowHasShadow(platform) {
+    return platform !== 'darwin';
+  }
+
   function effectiveHiddenModules(hidden, registry, unavailable) {
     const available = registry.filter((id) => !unavailable.includes(id));
     const result = registry.filter((id) => hidden.includes(id) || unavailable.includes(id));
@@ -51,5 +55,5 @@
   function portableMediaPath(directory, value) {
     return `${directory}/${String(value).replace(/\\/g, '/').split('/').pop()}`;
   }
-  return { capabilities, effectiveHiddenModules, panelBounds, windowsPanelLayout, portableMediaPath };
+  return { capabilities, mainWindowHasShadow, effectiveHiddenModules, panelBounds, windowsPanelLayout, portableMediaPath };
 });

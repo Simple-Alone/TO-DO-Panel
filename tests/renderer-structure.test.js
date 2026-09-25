@@ -883,6 +883,10 @@ test('macOS text editing lowers the native panel so IME candidates stay visible'
   assert.match(mainJs, /mediaPermissionRequests[\s\S]*?syncMainWindowLayer\(\)/);
 });
 
+test('macOS transparent main window does not retain a rectangular native shadow', () => {
+  assert.match(mainJs, /hasShadow: platformPolicy\.mainWindowHasShadow\(process\.platform\)/);
+});
+
 test('cross-display relocation applies target metrics before revealing the collapsed grip', () => {
   const relocationStart = mainJs.indexOf('function repositionWindow(display)');
   const relocationEnd = mainJs.indexOf('function beginNativeCollapse()', relocationStart);

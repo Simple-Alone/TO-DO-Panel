@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "test": "node scripts/test-desktop.js",
+    "test:panel-blur": "node scripts/test-panel-blur.js",
     "test:capture": "node scripts/test-capture.js",
     "start": "electron .",
     "build": "electron-builder --mac dmg --publish never",

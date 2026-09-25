@@ -605,7 +605,9 @@ function createWindow() {
     movable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    hasShadow: true,
+    // macOS 会在透明窗口失焦时继续为旧的矩形边界绘制原生阴影，直到收起缩窗完成。
+    // 面板自身已有 CSS 阴影，因此仅保留 Windows 的原生窗口阴影。
+    hasShadow: platformPolicy.mainWindowHasShadow(process.platform),
     acceptFirstMouse: true,
     hiddenInMissionControl: true,
     fullscreenable: false,

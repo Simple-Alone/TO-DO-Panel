@@ -41,6 +41,11 @@ test('Mac retains notch height and physical top origin', () => {
   assert.deepEqual(platform.panelBounds('darwin', display, true), { x: 136, y: 0, width: 1240, height: 616 });
 });
 
+test('macOS transparent panel uses its CSS shadow instead of a native rectangular shadow', () => {
+  assert.equal(platform.mainWindowHasShadow('darwin'), false);
+  assert.equal(platform.mainWindowHasShadow('win32'), true);
+});
+
 test('Windows capabilities cannot enable Mac-only integrations', () => {
   assert.deepEqual(platform.capabilities('win32').unavailableHomeModules, ['music', 'windows']);
   assert.equal(platform.capabilities('win32').automaticPaste, false);
