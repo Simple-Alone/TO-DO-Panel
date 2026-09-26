@@ -887,6 +887,17 @@ test('macOS transparent main window does not retain a rectangular native shadow'
   assert.match(mainJs, /hasShadow: platformPolicy\.mainWindowHasShadow\(process\.platform\)/);
 });
 
+test('panel blur debounce receives the runtime platform for macOS timing', () => {
+  assert.match(
+    mainJs,
+    /panelBlurCollapsePolicy\(\{ mode: currentMode, platform: process\.platform \}\)/
+  );
+  assert.match(
+    mainJs,
+    /panelBlurCollapsePolicy\(\{[\s\S]*?windowFocused: target\.isFocused\(\),[\s\S]*?platform: process\.platform,[\s\S]*?\}\)/
+  );
+});
+
 test('cross-display relocation applies target metrics before revealing the collapsed grip', () => {
   const relocationStart = mainJs.indexOf('function repositionWindow(display)');
   const relocationEnd = mainJs.indexOf('function beginNativeCollapse()', relocationStart);

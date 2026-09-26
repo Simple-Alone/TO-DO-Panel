@@ -84,8 +84,9 @@
   --d-base: 180ms;
   --d-slow: 260ms;
   --d-grand: 340ms;
-  --d-island-close: 280ms;
-  --d-island-close-delay: 60ms;
+  --d-island-close: 220ms;
+  --d-island-close-delay: 20ms;
   --d-island-shell-fade: 80ms;
+  --d-island-shell-fade-delay: 160ms;
   --island-half-width: 100px;
 }

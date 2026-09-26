@@ -232,7 +232,7 @@ body {
   opacity: 0;
   transition:
     clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay),
-    opacity var(--d-island-close) var(--ease-out) var(--d-island-close-delay);
+    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay);
 }
 
 #app.closing .panel > .topbar,

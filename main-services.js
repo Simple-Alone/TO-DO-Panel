@@ -548,11 +548,11 @@ function collapsedDisplayRelocationPolicy({ visible, mode, currentDisplayId, tar
   };
 }
 
-function panelBlurCollapsePolicy({ mode, windowFocused, guarded } = {}) {
+function panelBlurCollapsePolicy({ mode, windowFocused, guarded, platform } = {}) {
   return {
     collapse: guarded !== true && windowFocused !== true,
     closeLauncher: mode === 'launcher',
-    settleDelayMs: 80,
+    settleDelayMs: platform === 'darwin' ? 0 : 80,
   };
 }
 

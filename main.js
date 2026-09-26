@@ -441,7 +441,7 @@ function schedulePanelBlurCollapse() {
   const target = mainWindow;
   const generation = ++panelBlurGeneration;
   if (panelBlurTimer) clearTimeout(panelBlurTimer);
-  const initial = panelBlurCollapsePolicy({ mode: currentMode });
+  const initial = panelBlurCollapsePolicy({ mode: currentMode, platform: process.platform });
   panelBlurTimer = setTimeout(() => {
     if (generation !== panelBlurGeneration || mainWindow !== target || target.isDestroyed()) return;
     panelBlurTimer = null;
@@ -449,6 +449,7 @@ function schedulePanelBlurCollapse() {
       mode: currentMode,
       windowFocused: target.isFocused(),
       guarded: mediaPermissionRequests > 0 || transientSystemInteractionRequests > 0 || launcherManaging,
+      platform: process.platform,
     });
     if (!policy.collapse) return;
     if (policy.closeLauncher) target.webContents.send('launcher:close');

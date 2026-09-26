@@ -31,7 +31,7 @@ test('shared design tokens load from shell.css before module and shell rules', (
   assert.doesNotMatch(stylesCss, /^:root \{/);
 });
 
-test('closing panel fades its shell throughout the contraction', () => {
+test('closing panel keeps its shell opaque until the final fast fade', () => {
   const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
   assert.match(
     closingShell,
@@ -39,9 +39,12 @@ test('closing panel fades its shell throughout the contraction', () => {
   );
   assert.match(
     closingShell,
-    /opacity var\(--d-island-close\) var\(--ease-out\) var\(--d-island-close-delay\)/
+    /opacity var\(--d-island-shell-fade\) var\(--ease-out\) var\(--d-island-shell-fade-delay\)/
   );
-  assert.doesNotMatch(shellCss, /--d-island-shell-fade-delay/);
+  assert.match(shellCss, /--d-island-close:\s*220ms/);
+  assert.match(shellCss, /--d-island-close-delay:\s*20ms/);
+  assert.match(shellCss, /--d-island-shell-fade:\s*80ms/);
+  assert.match(shellCss, /--d-island-shell-fade-delay:\s*160ms/);
 });
 
 test('collapsed notch applies display height immediately while retaining visual transitions', () => {
