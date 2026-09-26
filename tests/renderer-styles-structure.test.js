@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'renderer', 'index.html'), 'utf8');
+const appJs = fs.readFileSync(path.join(root, 'renderer', 'app.js'), 'utf8');
 const shellCss = fs.readFileSync(path.join(root, 'renderer', 'shell.css'), 'utf8');
 const stylesCss = fs.readFileSync(path.join(root, 'renderer', 'styles.css'), 'utf8');
 const homeCss = fs.readFileSync(path.join(root, 'renderer', 'home.css'), 'utf8');
@@ -31,20 +32,34 @@ test('shared design tokens load from shell.css before module and shell rules', (
   assert.doesNotMatch(stylesCss, /^:root \{/);
 });
 
-test('closing panel keeps its shell opaque until the final fast fade', () => {
+test('closing panel contracts to an opaque notch without a transparent handoff', () => {
   const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
   assert.match(
     closingShell,
     /clip-path var\(--d-island-close\) var\(--ease-soft\) var\(--d-island-close-delay\)/
   );
-  assert.match(
-    closingShell,
-    /opacity var\(--d-island-shell-fade\) var\(--ease-out\) var\(--d-island-shell-fade-delay\)/
-  );
+  assert.match(closingShell, /opacity:\s*1/);
+  assert.doesNotMatch(closingShell, /opacity var\(--d-island-shell-fade\)/);
   assert.match(shellCss, /--d-island-close:\s*220ms/);
   assert.match(shellCss, /--d-island-close-delay:\s*20ms/);
   assert.match(shellCss, /--d-island-shell-fade:\s*80ms/);
   assert.match(shellCss, /--d-island-shell-fade-delay:\s*160ms/);
+});
+
+test('macOS collapse keeps the final notch visible across the native window handoff', () => {
+  const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
+  const closingNotch = stylesCss.match(/#app\.closing \.notch \{([\s\S]*?)\n\}/)?.[1] || '';
+  const closingGrip = stylesCss.match(/#app\.closing \.notch-dot \{([\s\S]*?)\n\}/)?.[1] || '';
+
+  assert.match(closingShell, /opacity:\s*1/);
+  assert.doesNotMatch(closingShell, /opacity var\(--d-island-shell-fade\)/);
+  assert.match(closingNotch, /align-items:\s*flex-end/);
+  assert.match(closingNotch, /padding-bottom:\s*2px/);
+  assert.match(closingGrip, /opacity:\s*1/);
+  assert.match(
+    appJs,
+    /app\.dataset\.platform === 'win32' \? 'opacity' : 'clip-path'/
+  );
 });
 
 test('collapsed notch applies display height immediately while retaining visual transitions', () => {

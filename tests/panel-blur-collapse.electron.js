@@ -109,6 +109,43 @@ async function runScenario(mainWindow) {
     }, 'main window did not expand');
     record('expanded', mainWindow);
 
+    await contents.executeJavaScript(`(() => {
+      const frames = [];
+      window.__collapseVisualFrames = frames;
+      window.__collapseTransitionProperties = [];
+      document.querySelector('.panel').addEventListener('transitionend', (event) => {
+        if (event.pseudoElement === '::before') {
+          window.__collapseTransitionProperties.push(event.propertyName);
+        }
+      });
+      const sample = () => {
+        const root = document.getElementById('app');
+        const notch = document.getElementById('notch');
+        const grip = notch.querySelector('.notch-dot');
+        const stage = root.classList.contains('closing')
+          ? 'closing'
+          : (root.classList.contains('collapsed') ? 'collapsed' : 'expanded');
+        if (stage !== 'expanded') {
+          const shell = getComputedStyle(document.querySelector('.panel'), '::before');
+          const notchStyle = getComputedStyle(notch);
+          const gripStyle = getComputedStyle(grip);
+          const notchRect = notch.getBoundingClientRect();
+          const gripRect = grip.getBoundingClientRect();
+          frames.push({
+            stage,
+            shellOpacity: Number(shell.opacity),
+            notchBackground: notchStyle.backgroundColor,
+            gripOpacity: Number(gripStyle.opacity),
+            gripBottomGap: notchRect.bottom - gripRect.bottom,
+          });
+        }
+        if (stage !== 'collapsed' || !frames.some((frame) => frame.stage === 'closing')) {
+          requestAnimationFrame(sample);
+        }
+      };
+      requestAnimationFrame(sample);
+    })()`);
+
     let blurred = false;
     mainWindow.once('blur', () => {
       blurred = true;
@@ -131,6 +168,11 @@ async function runScenario(mainWindow) {
       const state = await rendererState(contents);
       return state.className.includes('collapsed') && state.expanded === false && state.busy === false;
     }, 'main window did not finish collapsing');
+    await contents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(resolve))');
+    const visualFrames = await contents.executeJavaScript('window.__collapseVisualFrames || []');
+    const transitionProperties = await contents.executeJavaScript(
+      'window.__collapseTransitionProperties || []'
+    );
     mainWindow.setSize(200, 38, false);
     record('collapsed-after-blur', mainWindow);
 
@@ -140,6 +182,25 @@ async function runScenario(mainWindow) {
       'transparent macOS window must not retain a native rectangular shadow during blur collapse'
     );
     assert.equal(mainWindow.getBounds().width, 200, 'blur collapse should restore the notch width');
+    if (process.platform === 'darwin') {
+      const closingFrames = visualFrames.filter((frame) => frame.stage === 'closing');
+      const collapsedFrame = visualFrames.find((frame) => frame.stage === 'collapsed');
+      assert.ok(closingFrames.length > 0, 'collapse should expose renderer frames for visual auditing');
+      assert.ok(
+        closingFrames.every((frame) => frame.shellOpacity === 1),
+        'macOS closing shell must never introduce a transparent frame before native resize'
+      );
+      const finalClosingFrame = closingFrames.at(-1);
+      assert.ok(finalClosingFrame.gripOpacity > 0.99, 'grip must finish appearing before native resize');
+      assert.ok(collapsedFrame, 'collapse should expose the first collapsed renderer frame');
+      assert.ok(
+        transitionProperties.includes('clip-path'),
+        'macOS collapse must settle from the clip-path event instead of the fallback timer'
+      );
+      assert.equal(finalClosingFrame.notchBackground, collapsedFrame.notchBackground);
+      assert.ok(Math.abs(finalClosingFrame.gripOpacity - collapsedFrame.gripOpacity) < 0.01);
+      assert.ok(Math.abs(finalClosingFrame.gripBottomGap - collapsedFrame.gripBottomGap) < 0.1);
+    }
     diagnostic('Panel blur collapse check passed');
     completed = true;
     clearTimeout(hardTimeout);

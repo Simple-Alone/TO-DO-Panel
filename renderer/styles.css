@@ -214,10 +214,20 @@ body {
 /* 收起先退内容，再让岛体的宽、高同步向屏幕顶部中心收拢。 */
 #app.closing .notch {
   height: var(--notch-h, 38px);
+  align-items: flex-end;
   padding: 0;
+  padding-bottom: 2px;
   background: var(--bg-base);
   pointer-events: none;
   border-radius: 0 0 var(--r-notch) var(--r-notch);
+}
+
+#app.closing .notch-dot {
+  opacity: 1;
+  transition:
+    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay),
+    width var(--d-base) var(--ease-spring),
+    background var(--d-fast) var(--ease);
 }
 
 #app.closing .panel {
@@ -229,10 +239,8 @@ body {
     0 calc(50% - var(--island-half-width)) calc(100% - var(--notch-h, 38px))
       calc(50% - var(--island-half-width)) round 0 0 var(--r-notch) var(--r-notch)
   );
-  opacity: 0;
-  transition:
-    clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay),
-    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay);
+  opacity: 1;
+  transition: clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay);
 }
 
 #app.closing .panel > .topbar,

@@ -132,6 +132,7 @@ function nextAnimationFrame() {
 function waitForPanelMotion() {
   return new Promise((resolve) => {
     let settled = false;
+    const completionProperty = app.dataset.platform === 'win32' ? 'opacity' : 'clip-path';
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -142,7 +143,7 @@ function waitForPanelMotion() {
     const onEnd = (event) => {
       if (
         event.target === panel &&
-        event.propertyName === 'opacity' &&
+        event.propertyName === completionProperty &&
         event.pseudoElement === '::before'
       ) {
         finish();
