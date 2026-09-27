@@ -43,6 +43,7 @@ const { createTaskNotificationQueue } = require('./main/task-notification-queue'
 const { createTaskNotificationTimers } = require('./main/task-notification-timers');
 const { createTaskNotificationWindowState } = require('./main/task-notification-window-state');
 const { createTaskNotificationWindowFactory } = require('./main/task-notification-window');
+const { createNotchSurfaceWindow } = require('./main/notch-surface-window');
 const { createTaskNotificationController } = require('./main/task-notification-controller');
 const { createTodoReminderService } = require('./main/todo-reminder-service');
 const { createFinanceConfigResolver } = require('./main/finance-config-resolver');
@@ -162,7 +163,7 @@ app.setName('Dynamic Panel');
 // Honor Electron's standard profile switch for isolated automated tests.
 app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || LEGACY_USER_DATA_PATH);
 
-const COLLAPSED_WIDTH = 200;
+const COLLAPSED_WIDTH = process.platform === 'darwin' ? 180 : 200;
 const COLLAPSED_MIN_HEIGHT = 38;
 // NOTCH_LIP（原 6px 唇边）已移除：折叠条高度现在恰好等于菜单栏高（≈物理刘海高），
 // 一个像素都不超出物理刘海。虽然折叠条完全在菜单栏拦截带内，
@@ -254,6 +255,8 @@ const TASK_NOTIFICATION_SOURCES = new Set(['codex', 'gpt', 'claude']);
 const TODO_REMINDER_LEAD_MS = 60 * 60 * 1000;
 
 let mainWindow = null;
+let notchSurfaceWindow = null;
+let notchSurfaceReady = false;
 let tray = null;
 let currentMode = 'collapsed';
 let currentTab = 'home';
@@ -345,6 +348,38 @@ function syncMainWindowLayer() {
   appliedMainWindowLayer = identity;
 }
 
+function notchSurfaceBounds(display) {
+  return getCenteredBounds(COLLAPSED_WIDTH, getCollapsedHeight(display), display);
+}
+
+function sendNotchSurfaceState(mode = currentMode) {
+  if (!notchSurfaceReady || !notchSurfaceWindow || notchSurfaceWindow.isDestroyed()) return;
+  notchSurfaceWindow.webContents.send('notch-surface:state', {
+    mode,
+    theme: readAppSettings().theme,
+  });
+}
+
+function syncNotchSurfaceGeometry(display) {
+  if (!notchSurfaceWindow || notchSurfaceWindow.isDestroyed()) return;
+  notchSurfaceWindow.setBounds(notchSurfaceBounds(display || getWindowDisplay()), false);
+}
+
+function syncNotchSurfaceVisibility() {
+  if (!notchSurfaceReady || !notchSurfaceWindow || notchSurfaceWindow.isDestroyed()) return;
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    notchSurfaceWindow.showInactive();
+  } else {
+    notchSurfaceWindow.hide();
+  }
+}
+
+function setNotchSurfaceMode(mode) {
+  if (!notchSurfaceWindow || notchSurfaceWindow.isDestroyed()) return;
+  sendNotchSurfaceState(mode);
+  notchSurfaceWindow.setIgnoreMouseEvents(mode !== 'collapsed');
+}
+
 function applyMode(mode, display) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   cancelCollapseWatchdog();
@@ -353,6 +388,8 @@ function applyMode(mode, display) {
   applyWindowGeometry(mode, display);
   mainWindow.setIgnoreMouseEvents(false);
   currentMode = mode;
+  syncNotchSurfaceGeometry(display);
+  setNotchSurfaceMode(mode);
   if (mode === 'collapsed') textInputActive = false;
   syncMainWindowLayer();
   if (mode === 'expanded') hideWhenCollapsed = false;
@@ -371,6 +408,9 @@ function cancelDisplayRelocation(restoreOpacity = true) {
   if (displayRelocationTimer) clearTimeout(displayRelocationTimer);
   displayRelocationTimer = null;
   if (restoreOpacity && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOpacity(1);
+  if (restoreOpacity && notchSurfaceWindow && !notchSurfaceWindow.isDestroyed()) {
+    notchSurfaceWindow.setOpacity(1);
+  }
 }
 
 function syncWindowLayoutMetrics(display) {
@@ -389,6 +429,7 @@ function repositionWindow(display) {
   });
   if (!policy.conceal) {
     applyWindowGeometry(currentMode, display);
+    syncNotchSurfaceGeometry(display);
     if (display?.id !== undefined && display.id !== currentDisplay.id) syncWindowLayoutMetrics(display);
     return;
   }
@@ -399,13 +440,17 @@ function repositionWindow(display) {
   const generation = ++displayRelocationGeneration;
   if (displayRelocationTimer) clearTimeout(displayRelocationTimer);
   target.setOpacity(0);
+  if (notchSurfaceWindow && !notchSurfaceWindow.isDestroyed()) notchSurfaceWindow.setOpacity(0);
   applyWindowGeometry('collapsed', display);
+  syncNotchSurfaceGeometry(display);
   syncWindowLayoutMetrics(display);
   displayRelocationTimer = setTimeout(() => {
     if (generation !== displayRelocationGeneration || mainWindow !== target || target.isDestroyed()) return;
     displayRelocationTimer = null;
     applyWindowGeometry('collapsed', display);
+    syncNotchSurfaceGeometry(display);
     target.setOpacity(1);
+    if (notchSurfaceWindow && !notchSurfaceWindow.isDestroyed()) notchSurfaceWindow.setOpacity(1);
   }, policy.settleDelayMs);
 }
 
@@ -414,6 +459,7 @@ function beginNativeCollapse() {
   const targetWindow = mainWindow;
   const generation = ++collapseGeneration;
   targetWindow.setIgnoreMouseEvents(true);
+  setNotchSurfaceMode('closing');
   if (collapseWatchdog) clearTimeout(collapseWatchdog);
   collapseWatchdog = setTimeout(() => {
     if (generation !== collapseGeneration) return;
@@ -626,6 +672,30 @@ function createWindow() {
     },
   });
 
+  if (process.platform === 'darwin') {
+    notchSurfaceReady = false;
+    notchSurfaceWindow = createNotchSurfaceWindow({
+      BrowserWindow,
+      bounds: notchSurfaceBounds(getTargetDisplay()),
+      preloadPath: path.join(__dirname, 'notch-surface-preload.js'),
+      htmlPath: path.join(__dirname, 'renderer', 'notch-surface.html'),
+      theme: readAppSettings().theme,
+      installLocalWebContentsGuards,
+      onReady: (window) => {
+        if (window !== notchSurfaceWindow || window.isDestroyed()) return;
+        notchSurfaceReady = true;
+        syncNotchSurfaceGeometry();
+        setNotchSurfaceMode(currentMode);
+        syncNotchSurfaceVisibility();
+      },
+      onClosed: (window) => {
+        if (window !== notchSurfaceWindow) return;
+        notchSurfaceReady = false;
+        notchSurfaceWindow = null;
+      },
+    });
+  }
+
   installLocalWebContentsGuards(mainWindow.webContents);
   mainWindow.webContents.on('context-menu', (event, params) => {
     if (!params.isEditable || !mainWindow || mainWindow.isDestroyed()) return;
@@ -664,10 +734,12 @@ function createWindow() {
   mainWindow.on('focus', cancelPanelBlurCollapse);
 
   mainWindow.on('show', () => {
+    syncNotchSurfaceVisibility();
     syncHoverSpacePolling();
     syncDisplayFollowPolling();
   });
   mainWindow.on('hide', () => {
+    syncNotchSurfaceVisibility();
     cancelPanelBlurCollapse();
     cancelDisplayRelocation();
     textInputActive = false;
@@ -692,6 +764,9 @@ function createWindow() {
     hideWhenCollapsed = false;
     textInputActive = false;
     appliedMainWindowLayer = '';
+    if (notchSurfaceWindow && !notchSurfaceWindow.isDestroyed()) notchSurfaceWindow.destroy();
+    notchSurfaceReady = false;
+    notchSurfaceWindow = null;
     mainWindow = null;
     stopDisplayFollowPolling();
   });
@@ -1022,6 +1097,8 @@ function applyAppSettings() {
   if (changed) saveAppSettings(settings);
   if (mainWindow && !mainWindow.isDestroyed()) {
     applyWindowGeometry(currentMode, getWindowDisplay());
+    syncNotchSurfaceGeometry(getWindowDisplay());
+    sendNotchSurfaceState();
     mainWindow.webContents.send('window:metrics-changed', getLayoutMetrics());
     mainWindow.webContents.send('settings:changed', publicAppSettings());
   }
@@ -1171,6 +1248,16 @@ registerWorkspaceIpc({ ipcMain, workspaceController });
 function isMainWindowSender(sender) {
   return Boolean(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents);
 }
+
+ipcMain.on('notch-surface:toggle', (event) => {
+  if (!notchSurfaceWindow || notchSurfaceWindow.isDestroyed()
+    || event.sender !== notchSurfaceWindow.webContents || currentMode !== 'collapsed'
+    || !mainWindow || mainWindow.isDestroyed()) return;
+  hideWhenCollapsed = false;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('shortcut:toggle-panel');
+});
 
 const syncWorkspaceId = syncWorkspaceIdentity(workspaceRoot());
 const syncLocalStore = createSyncLocalStore({

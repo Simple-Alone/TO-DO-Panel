@@ -47,6 +47,7 @@
       "ai/**/*.js",
       "build/to-do-panel-icon.png",
       "preload.js",
+      "notch-surface-preload.js",
       "renderer/**/*",
       "scripts/codex-notify.js",
       "scripts/claude-notify.js",

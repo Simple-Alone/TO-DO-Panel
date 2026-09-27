@@ -32,34 +32,31 @@ test('shared design tokens load from shell.css before module and shell rules', (
   assert.doesNotMatch(stylesCss, /^:root \{/);
 });
 
-test('closing panel contracts to an opaque notch without a transparent handoff', () => {
+test('closing panel fades its shell before the native window shrinks', () => {
   const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
   assert.match(
     closingShell,
     /clip-path var\(--d-island-close\) var\(--ease-soft\) var\(--d-island-close-delay\)/
   );
-  assert.match(closingShell, /opacity:\s*1/);
-  assert.doesNotMatch(closingShell, /opacity var\(--d-island-shell-fade\)/);
+  assert.match(closingShell, /opacity:\s*0/);
+  assert.match(closingShell, /opacity var\(--d-island-shell-fade\)/);
   assert.match(shellCss, /--d-island-close:\s*220ms/);
   assert.match(shellCss, /--d-island-close-delay:\s*20ms/);
   assert.match(shellCss, /--d-island-shell-fade:\s*80ms/);
   assert.match(shellCss, /--d-island-shell-fade-delay:\s*160ms/);
 });
 
-test('macOS collapse keeps the final notch visible across the native window handoff', () => {
+test('macOS collapse keeps the notch visible while the panel shell fades', () => {
   const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
   const closingNotch = stylesCss.match(/#app\.closing \.notch \{([\s\S]*?)\n\}/)?.[1] || '';
   const closingGrip = stylesCss.match(/#app\.closing \.notch-dot \{([\s\S]*?)\n\}/)?.[1] || '';
 
-  assert.match(closingShell, /opacity:\s*1/);
-  assert.doesNotMatch(closingShell, /opacity var\(--d-island-shell-fade\)/);
+  assert.match(closingShell, /opacity:\s*0/);
+  assert.match(closingShell, /opacity var\(--d-island-shell-fade\)/);
   assert.match(closingNotch, /align-items:\s*flex-end/);
   assert.match(closingNotch, /padding-bottom:\s*2px/);
   assert.match(closingGrip, /opacity:\s*1/);
-  assert.match(
-    appJs,
-    /app\.dataset\.platform === 'win32' \? 'opacity' : 'clip-path'/
-  );
+  assert.match(appJs, /event\.propertyName === 'opacity'/);
 });
 
 test('collapsed notch applies display height immediately while retaining visual transitions', () => {
@@ -67,6 +64,15 @@ test('collapsed notch applies display height immediately while retaining visual 
   assert.match(collapsedNotch, /height: var\(--notch-h, 38px\)/);
   assert.match(collapsedNotch, /border-radius var\(--d-base\) var\(--ease-out\)/);
   assert.doesNotMatch(collapsedNotch, /height var\(/);
+});
+
+test('macOS notch width matches the physical notch while Windows keeps its panel width', () => {
+  assert.match(shellCss, /--notch-width:\s*180px/);
+  assert.match(shellCss, /--island-half-width:\s*90px/);
+  const windowsApp = stylesCss.match(/#app\[data-platform='win32'\] \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(windowsApp, /--notch-width:\s*200px/);
+  assert.match(windowsApp, /--island-half-width:\s*100px/);
+  assert.match(stylesCss, /\.notch \{[\s\S]*?width:\s*var\(--notch-width\)/);
 });
 
 test('credential styles load as a dedicated module while shared theme selectors remain in the shell stylesheet', () => {

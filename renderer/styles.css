@@ -43,9 +43,14 @@ body {
   position: relative;
 }
 
+#app[data-platform='win32'] {
+  --notch-width: 200px;
+  --island-half-width: 100px;
+}
+
 /* ============ 刘海条 ============ */
 .notch {
-  width: 200px;
+  width: var(--notch-width);
   height: var(--notch-h, 38px); /* 菜单栏高 + 唇边，主进程按屏计算后由 JS 写入 */
   position: absolute;
   top: 0;
@@ -239,8 +244,10 @@ body {
     0 calc(50% - var(--island-half-width)) calc(100% - var(--notch-h, 38px))
       calc(50% - var(--island-half-width)) round 0 0 var(--r-notch) var(--r-notch)
   );
-  opacity: 1;
-  transition: clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay);
+  opacity: 0;
+  transition:
+    clip-path var(--d-island-close) var(--ease-soft) var(--d-island-close-delay),
+    opacity var(--d-island-shell-fade) var(--ease-out) var(--d-island-shell-fade-delay);
 }
 
 #app.closing .panel > .topbar,

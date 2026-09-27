@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const platformPolicy = require('../platform');
 
 const profile = process.env.TODO_TEST_USER_DATA
@@ -11,6 +11,7 @@ app.setPath('userData', profile);
 if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain');
 
 const outputDirectory = path.join(__dirname, '..', 'dist.noindex', 'panel-blur-collapse');
+const collapsedWidth = process.platform === 'darwin' ? 180 : 200;
 const timeline = [];
 let completed = false;
 
@@ -101,18 +102,23 @@ async function runScenario(mainWindow) {
     contents.focus();
     await waitFor(() => mainWindow.isFocused(), 'main window could not receive focus before expansion');
     record('collapsed', mainWindow);
-    mainWindow.setSize(1240, 616, false);
     await contents.executeJavaScript("document.getElementById('notch').click()");
     await waitFor(async () => {
       const state = await rendererState(contents);
       return state.className.includes('expanded') && state.expanded === true && state.busy === false;
     }, 'main window did not expand');
+    await waitFor(async () => contents.executeJavaScript(
+      "Number(getComputedStyle(document.querySelector('.panel'), '::before').opacity) > 0.99"
+    ), 'expanded panel shell did not finish appearing');
     record('expanded', mainWindow);
 
     await contents.executeJavaScript(`(() => {
       const frames = [];
       window.__collapseVisualFrames = frames;
       window.__collapseTransitionProperties = [];
+      window.__expandedShellOpacity = Number(
+        getComputedStyle(document.querySelector('.panel'), '::before').opacity
+      );
       document.querySelector('.panel').addEventListener('transitionend', (event) => {
         if (event.pseudoElement === '::before') {
           window.__collapseTransitionProperties.push(event.propertyName);
@@ -173,7 +179,9 @@ async function runScenario(mainWindow) {
     const transitionProperties = await contents.executeJavaScript(
       'window.__collapseTransitionProperties || []'
     );
-    mainWindow.setSize(200, 38, false);
+    const expandedShellOpacity = await contents.executeJavaScript(
+      'window.__expandedShellOpacity'
+    );
     record('collapsed-after-blur', mainWindow);
 
     assert.equal(
@@ -181,21 +189,26 @@ async function runScenario(mainWindow) {
       process.platform !== 'darwin',
       'transparent macOS window must not retain a native rectangular shadow during blur collapse'
     );
-    assert.equal(mainWindow.getBounds().width, 200, 'blur collapse should restore the notch width');
+    assert.equal(
+      mainWindow.getBounds().width,
+      collapsedWidth,
+      'blur collapse should restore the platform notch width'
+    );
     if (process.platform === 'darwin') {
       const closingFrames = visualFrames.filter((frame) => frame.stage === 'closing');
       const collapsedFrame = visualFrames.find((frame) => frame.stage === 'collapsed');
       assert.ok(closingFrames.length > 0, 'collapse should expose renderer frames for visual auditing');
-      assert.ok(
-        closingFrames.every((frame) => frame.shellOpacity === 1),
-        'macOS closing shell must never introduce a transparent frame before native resize'
-      );
       const finalClosingFrame = closingFrames.at(-1);
+      assert.ok(expandedShellOpacity > 0.99, 'expanded panel shell should be visible before blur');
+      assert.ok(
+        finalClosingFrame.shellOpacity < 0.01,
+        'panel shell must finish fading before the native window shrinks'
+      );
       assert.ok(finalClosingFrame.gripOpacity > 0.99, 'grip must finish appearing before native resize');
       assert.ok(collapsedFrame, 'collapse should expose the first collapsed renderer frame');
       assert.ok(
-        transitionProperties.includes('clip-path'),
-        'macOS collapse must settle from the clip-path event instead of the fallback timer'
+        transitionProperties.includes('opacity'),
+        'collapse must settle from the shell fade instead of the fallback timer'
       );
       assert.equal(finalClosingFrame.notchBackground, collapsedFrame.notchBackground);
       assert.ok(Math.abs(finalClosingFrame.gripOpacity - collapsedFrame.gripOpacity) < 0.01);
@@ -223,7 +236,7 @@ async function runScenario(mainWindow) {
 diagnostic('Panel blur collapse test: starting isolated renderer');
 app.whenReady().then(async () => {
   const mainWindow = new BrowserWindow({
-    width: 200,
+    width: collapsedWidth,
     height: 38,
     frame: false,
     transparent: true,
@@ -234,8 +247,37 @@ app.whenReady().then(async () => {
     skipTaskbar: true,
     hasShadow: platformPolicy.mainWindowHasShadow(process.platform),
     show: false,
-    webPreferences: { backgroundThrottling: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'panel-blur-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
   });
+  const boundsForMode = (mode) => {
+    const display = screen.getDisplayMatching(mainWindow.getBounds());
+    const size = mode === 'expanded'
+      ? { width: 1240, height: 616 }
+      : { width: collapsedWidth, height: 38 };
+    return {
+      x: Math.round(display.bounds.x + (display.bounds.width - size.width) / 2),
+      y: display.bounds.y,
+      ...size,
+    };
+  };
+  ipcMain.handle('test-window:set-mode', (event, mode) => {
+    if (event.sender !== mainWindow.webContents) return undefined;
+    mainWindow.setBounds(boundsForMode(mode), false);
+    return undefined;
+  });
+  ipcMain.handle('test-window:begin-collapse', () => undefined);
+  ipcMain.handle('test-window:metrics', () => ({
+    stripHeight: 38,
+    notchHeight: 38,
+    menuBarHeight: 38,
+    chromeY: 76,
+    tabSizes: {},
+  }));
   await mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.show();

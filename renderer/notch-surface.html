@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dynamic Panel Notch</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="shell.css" />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="notch-surface.css" />
+  </head>
+  <body>
+    <button id="notch-surface" type="button" aria-label="展开 Dynamic Panel">
+      <span aria-hidden="true"></span>
+    </button>
+    <script src="notch-surface.js"></script>
+  </body>
+</html>

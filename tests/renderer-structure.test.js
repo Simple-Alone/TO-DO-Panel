@@ -35,6 +35,10 @@ const notesTaxonomyJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', '
 const notesEditorJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'notes-editor-controller.js'), 'utf8');
 const notesControllerJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'notes-controller.js'), 'utf8');
 const preloadJs = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+const notchSurfacePreloadJs = fs.readFileSync(path.join(__dirname, '..', 'notch-surface-preload.js'), 'utf8');
+const notchSurfaceHtml = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'notch-surface.html'), 'utf8');
+const notchSurfaceCss = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'notch-surface.css'), 'utf8');
+const notchSurfaceJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'notch-surface.js'), 'utf8');
 const workspaceJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'workspace.js'), 'utf8');
 const workspaceWindowsJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'workspace-windows.js'), 'utf8');
 const workspaceCredentialsJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'workspace-credentials.js'), 'utf8');
@@ -106,6 +110,21 @@ test('preload exposes grouped domain APIs while retaining flat compatibility met
   assert.match(preloadJs, /setMode: \(mode\) =>/);
   assert.match(preloadJs, /getFinanceOverview: \(payload\) =>/);
   assert.match(preloadJs, /saveNoteImage: \(payload\) =>/);
+});
+
+test('macOS keeps a fixed notch surface above the panel native resize', () => {
+  assert.match(mainJs, /process\.platform === 'darwin'[\s\S]*?createNotchSurfaceWindow/);
+  assert.match(mainJs, /setNotchSurfaceMode\('closing'\)/);
+  assert.match(mainJs, /syncNotchSurfaceGeometry\(display\)/);
+  assert.match(mainJs, /mainWindow\.on\('show'[\s\S]*?syncNotchSurfaceVisibility/);
+  assert.match(mainJs, /mainWindow\.on\('hide'[\s\S]*?syncNotchSurfaceVisibility/);
+  assert.match(notchSurfacePreloadJs, /notch-surface:toggle/);
+  assert.match(notchSurfacePreloadJs, /notch-surface:state/);
+  assert.match(notchSurfaceHtml, /id="notch-surface"/);
+  assert.match(notchSurfaceCss, /background:\s*var\(--bg-base\)/);
+  assert.match(notchSurfaceCss, /align-items:\s*flex-end/);
+  assert.match(notchSurfaceJs, /state\?\.mode === 'expanded'/);
+  assert.match(notchSurfaceJs, /surface\.disabled = expanded/);
 });
 
 test('current windows keep their domain state outside the workspace coordinator', () => {

@@ -1281,6 +1281,7 @@ async function main() {
         const appSurface = document.getElementById('app');
         const originalPlatform = appSurface.dataset.platform;
         appSurface.dataset.platform = 'win32';
+        await setMode(false);
         appSurface.classList.remove('expanded', 'opening', 'closing');
         appSurface.classList.add('collapsed');
         const waitForClass = async (name) => {

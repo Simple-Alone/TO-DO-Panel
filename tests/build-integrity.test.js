@@ -27,6 +27,13 @@ test('electron package includes extracted main-process modules', () => {
   }
 });
 
+test('electron package includes every root preload entrypoint', () => {
+  for (const file of ['preload.js', 'notch-surface-preload.js']) {
+    assert.ok(buildPatterns().includes(file), `${file} must be included in the desktop package`);
+    assert.equal(fs.existsSync(path.join(root, file)), true, `${file} must resolve from the package root`);
+  }
+});
+
 test('main process imports resolve from the working tree', () => {
   const source = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   const imports = [...source.matchAll(/require\(['"](\.\/main\/[^'"]+)['"]\)/g)].map((match) => match[1]);

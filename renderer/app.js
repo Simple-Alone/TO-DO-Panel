@@ -132,7 +132,6 @@ function nextAnimationFrame() {
 function waitForPanelMotion() {
   return new Promise((resolve) => {
     let settled = false;
-    const completionProperty = app.dataset.platform === 'win32' ? 'opacity' : 'clip-path';
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -143,7 +142,7 @@ function waitForPanelMotion() {
     const onEnd = (event) => {
       if (
         event.target === panel &&
-        event.propertyName === completionProperty &&
+        event.propertyName === 'opacity' &&
         event.pseudoElement === '::before'
       ) {
         finish();
@@ -248,7 +247,7 @@ async function setMode(expanded) {
       await motion;
       await nextAnimationFrame();
       await nextAnimationFrame();
-      // 收起目标在缩窗前后保持相同外观；不要插入透明帧或重新播放淡入。
+      // 面板外壳先完全淡出，再收紧原生窗口；黑色刘海由独立的 .notch 持续显示。
       await ipcSetMode('collapsed');
       app.classList.remove('expanded', 'closing', 'opening');
       app.classList.add('collapsed');

@@ -88,5 +88,6 @@
   --d-island-close-delay: 20ms;
   --d-island-shell-fade: 80ms;
   --d-island-shell-fade-delay: 160ms;
-  --island-half-width: 100px;
+  --notch-width: 180px;
+  --island-half-width: 90px;
 }
