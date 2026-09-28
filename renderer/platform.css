@@ -1,3 +1,15 @@
+/* macOS 的固定刘海窗口是收起阶段和折叠终态的唯一刘海表面。
+   主窗口可能被 WindowServer 约束到菜单栏下方，不能再重复绘制同一外形。 */
+#app[data-platform='darwin']:is(.closing, .collapsed) .notch {
+  background: transparent;
+  pointer-events: none;
+}
+
+#app[data-platform='darwin']:is(.closing, .collapsed) .notch-dot {
+  opacity: 0;
+  transition: none;
+}
+
 /* ============ Windows 平台覆盖 ============ */
 /* Windows 没有物理刘海遮挡，常驻黑条应比原生透明画布更克制。 */
 #app[data-platform='win32'].collapsed .notch {

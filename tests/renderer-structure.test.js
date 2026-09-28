@@ -115,6 +115,10 @@ test('preload exposes grouped domain APIs while retaining flat compatibility met
 test('macOS keeps a fixed notch surface above the panel native resize', () => {
   assert.match(mainJs, /process\.platform === 'darwin'[\s\S]*?createNotchSurfaceWindow/);
   assert.match(mainJs, /setNotchSurfaceMode\('closing'\)/);
+  assert.match(
+    mainJs,
+    /mainWindow\.setIgnoreMouseEvents\(process\.platform === 'darwin' && mode === 'collapsed'\)/
+  );
   assert.match(mainJs, /syncNotchSurfaceGeometry\(display\)/);
   assert.match(mainJs, /mainWindow\.on\('show'[\s\S]*?syncNotchSurfaceVisibility/);
   assert.match(mainJs, /mainWindow\.on\('hide'[\s\S]*?syncNotchSurfaceVisibility/);

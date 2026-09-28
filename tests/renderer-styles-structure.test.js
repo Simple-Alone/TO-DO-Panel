@@ -46,16 +46,20 @@ test('closing panel fades its shell before the native window shrinks', () => {
   assert.match(shellCss, /--d-island-shell-fade-delay:\s*160ms/);
 });
 
-test('macOS collapse keeps the notch visible while the panel shell fades', () => {
+test('macOS collapse delegates the visible notch to the dedicated surface window', () => {
   const closingShell = stylesCss.match(/#app\.closing \.panel::before \{([\s\S]*?)\n\}/)?.[1] || '';
-  const closingNotch = stylesCss.match(/#app\.closing \.notch \{([\s\S]*?)\n\}/)?.[1] || '';
-  const closingGrip = stylesCss.match(/#app\.closing \.notch-dot \{([\s\S]*?)\n\}/)?.[1] || '';
+  const macNotch = platformCss.match(
+    /#app\[data-platform='darwin'\]:is\(\.closing, \.collapsed\) \.notch \{([\s\S]*?)\n\}/
+  )?.[1] || '';
+  const macGrip = platformCss.match(
+    /#app\[data-platform='darwin'\]:is\(\.closing, \.collapsed\) \.notch-dot \{([\s\S]*?)\n\}/
+  )?.[1] || '';
 
   assert.match(closingShell, /opacity:\s*0/);
   assert.match(closingShell, /opacity var\(--d-island-shell-fade\)/);
-  assert.match(closingNotch, /align-items:\s*flex-end/);
-  assert.match(closingNotch, /padding-bottom:\s*2px/);
-  assert.match(closingGrip, /opacity:\s*1/);
+  assert.match(macNotch, /background:\s*transparent/);
+  assert.match(macNotch, /pointer-events:\s*none/);
+  assert.match(macGrip, /opacity:\s*0/);
   assert.match(appJs, /event\.propertyName === 'opacity'/);
 });
 

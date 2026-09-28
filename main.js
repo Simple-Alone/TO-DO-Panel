@@ -386,7 +386,9 @@ function applyMode(mode, display) {
   if (mode !== 'collapsed') cancelDisplayRelocation();
   if (mode !== 'collapsed') windowsCollapsedHovering = false;
   applyWindowGeometry(mode, display);
-  mainWindow.setIgnoreMouseEvents(false);
+  // macOS 折叠态由独立刘海窗口负责显示和点击。主窗口即使被系统下推到
+  // 菜单栏下方，也必须保持透明且不拦截下层应用。
+  mainWindow.setIgnoreMouseEvents(process.platform === 'darwin' && mode === 'collapsed');
   currentMode = mode;
   syncNotchSurfaceGeometry(display);
   setNotchSurfaceMode(mode);

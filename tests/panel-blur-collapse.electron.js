@@ -204,7 +204,15 @@ async function runScenario(mainWindow) {
         finalClosingFrame.shellOpacity < 0.01,
         'panel shell must finish fading before the native window shrinks'
       );
-      assert.ok(finalClosingFrame.gripOpacity > 0.99, 'grip must finish appearing before native resize');
+      assert.equal(
+        finalClosingFrame.notchBackground,
+        'rgba(0, 0, 0, 0)',
+        'the main window must hand the visible notch to the dedicated surface before native resize'
+      );
+      assert.ok(
+        finalClosingFrame.gripOpacity < 0.01,
+        'the main-window grip must be hidden before native resize'
+      );
       assert.ok(collapsedFrame, 'collapse should expose the first collapsed renderer frame');
       assert.ok(
         transitionProperties.includes('opacity'),

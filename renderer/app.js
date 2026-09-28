@@ -247,7 +247,7 @@ async function setMode(expanded) {
       await motion;
       await nextAnimationFrame();
       await nextAnimationFrame();
-      // 面板外壳先完全淡出，再收紧原生窗口；黑色刘海由独立的 .notch 持续显示。
+      // 面板外壳先完全淡出，再收紧原生窗口；macOS 黑色刘海由独立窗口持续显示。
       await ipcSetMode('collapsed');
       app.classList.remove('expanded', 'closing', 'opening');
       app.classList.add('collapsed');
