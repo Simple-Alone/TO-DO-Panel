@@ -33,7 +33,7 @@ test('home IPC registers the complete weather and music contract', () => {
     'home:weather-search', 'home:weather', 'home:music-library', 'home:music-mode',
     'home:music-select-playlist', 'home:music-refresh-source', 'home:music-add-source',
     'home:music-remove-source', 'home:music-browse-categories', 'home:music-search-playlists',
-    'home:music-browse-category', 'home:music-browse-recommend', 'home:music-browse-user-playlists',
+    'home:music-browse-category', 'home:music-browse-recommend', 'home:music-extend-recommend', 'home:music-browse-user-playlists',
     'home:music-select-online-playlist', 'home:music-choose-files', 'home:music-choose-folder',
     'home:music-add-network', 'home:music-remove', 'home:music-load', 'home:music-cover',
   ]);

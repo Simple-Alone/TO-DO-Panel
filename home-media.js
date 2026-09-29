@@ -97,6 +97,7 @@ function normalizeCatalogTrack(value, sourceId, playlistId) {
     album: boundedText(value?.album, 160),
     cover: boundedText(value?.cover, 2048),
     extra: normalizedExtra(value?.extra),
+    isVip: value?.isVip === true || value?.is_vip === true,
     duration: Math.max(0, Math.min(24 * 60 * 60, Number(value?.duration) || 0)),
     mimeType: 'application/octet-stream',
   };
@@ -153,9 +154,15 @@ function normalizeCatalogSource(value) {
     if (!playlist || playlistIds.has(playlist.id) || playlists.length >= MAX_CATALOG_PLAYLISTS) continue;
     playlistIds.add(playlist.id); playlists.push(playlist);
   }
-  const activeView = value?.activeView === 'online' ? 'online' : 'mine';
   const activeOnlinePlaylist = normalizeCatalogPlaylist(value?.activeOnlinePlaylist);
   let activePlaylistId = boundedText(value?.activePlaylistId, 120);
+  const recoverPersonalRecommendation = activeOnlinePlaylist?.kind === 'personal'
+    && activeOnlinePlaylist.provider === 'kugou'
+    && Array.isArray(value?.cachedTracks)
+    && value.cachedTracks.length > 0
+    && !playlistIds.has(activePlaylistId);
+  const activeView = value?.activeView === 'online' || recoverPersonalRecommendation ? 'online' : 'mine';
+  if (recoverPersonalRecommendation) activePlaylistId = activeOnlinePlaylist.id;
   if (!playlistIds.has(activePlaylistId) && !(activeView === 'online' && activeOnlinePlaylist?.id === activePlaylistId)) activePlaylistId = playlists[0]?.id || '';
   const platformSources = [];
   const platformIds = new Set();
@@ -186,6 +193,9 @@ function normalizeCatalogSource(value) {
     if (!track || trackIds.has(track.id) || cachedTracks.length >= MAX_CATALOG_TRACKS) continue;
     trackIds.add(track.id); cachedTracks.push(track);
   }
+  const recommendation = (value?.recommendation?.kind === 'kugou-personal' || recoverPersonalRecommendation) && activeOnlinePlaylist?.id === activePlaylistId
+    ? { kind: 'kugou-personal', cursor: boundedText(value?.recommendation?.cursor, 240), playlistId: activePlaylistId }
+    : null;
   return {
     id,
     type: 'music-dl',
@@ -199,6 +209,7 @@ function normalizeCatalogSource(value) {
     onlinePlaylists,
     activeView,
     activeOnlinePlaylist,
+    recommendation,
     cachedTracks,
     updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : 0,
     createdAt: Number.isFinite(value?.createdAt) ? value.createdAt : Date.now(),
@@ -399,6 +410,7 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
       ],
       playlists: playlists.map((playlist) => publicPlaylist(playlist, playlist.id === playlistId && sourceId !== BUILTIN_SOURCE_ID ? queue.length : playlist.trackCount)),
       browser: sourceId === BUILTIN_SOURCE_ID ? null : { platformSources: activeSource.platformSources, activePlatform: activeSource.activePlatform, categories: activeSource.categories, onlinePlaylists: activeSource.onlinePlaylists.map((playlist) => publicPlaylist(playlist)), activeView: activeSource.activeView },
+      recommendation: sourceId !== BUILTIN_SOURCE_ID && activeSource.recommendation?.playlistId === playlistId ? { kind: activeSource.recommendation.kind, active: true } : null,
       tracks: queue.map(publicTrack),
       totalTracks: library.tracks.length,
     };
@@ -569,6 +581,20 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
     if (!Array.isArray(payload?.playlists)) throw Error('invalid_catalog_response');
     return payload.playlists.map((item) => normalizeCatalogPlaylist({ ...item, remoteId: item.id, id: `online-${platform}-${item.id}`, source: platform })).filter(Boolean).slice(0, 60);
   }
+  async function fetchKugouPersonalRecommendation(source, state = {}) {
+    const params = new URLSearchParams({ action: state.cursor ? 'play' : 'login' });
+    if (state.cursor) params.set('cursor', boundedText(state.cursor, 240));
+    if (state.hash) params.set('hash', boundedText(state.hash, 240));
+    if (state.songId) params.set('song_id', boundedText(state.songId, 240));
+    if (state.playTime > 0) params.set('play_time', String(Math.min(24 * 60 * 60, Math.round(state.playTime))));
+    if (state.remainSongCount >= 0) params.set('remain_songcnt', String(Math.min(MAX_CATALOG_TRACKS, Math.round(state.remainSongCount))));
+    if (state.overplay) params.set('overplay', '1');
+    for (const id of Array.isArray(state.exclude) ? state.exclude.slice(-100) : []) params.append('exclude', boundedText(id, 240));
+    const payload = await catalogRequest(source.baseUrl, `/api/recommend/kugou/songs?${params}`, { maxBytes: MAX_CATALOG_JSON_BYTES, timeout: 30000, responseType: 'json' });
+    if (payload?.ok !== true) throw Error(boundedText(payload?.error, 80) || 'recommended_songs_unavailable');
+    if (!Array.isArray(payload.songs)) throw Error('invalid_catalog_response');
+    return { cursor: boundedText(payload.cursor, 240), songs: payload.songs };
+  }
   async function fetchOnlineUserPlaylists(source, platform) {
     const payload = await catalogRequest(source.baseUrl, `/api/playlist/user?source=${encodeURIComponent(platform)}&page=1&limit=100`, { maxBytes: MAX_CATALOG_JSON_BYTES, timeout: 30000, responseType: 'json' });
     if (!Array.isArray(payload?.playlists)) throw Error('invalid_catalog_response');
@@ -588,7 +614,7 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
         if (track && !track.cover && playlist.cover) track.cover = playlist.cover;
         return track;
       }).filter(Boolean).slice(0, MAX_CATALOG_TRACKS);
-      source.activePlatform = platform; source.categories = []; source.onlinePlaylists = [playlist]; source.activeView = 'online'; source.activeOnlinePlaylist = playlist; source.cachedTracks = tracks; source.activePlaylistId = playlist.id; source.updatedAt = now();
+      source.activePlatform = platform; source.categories = []; source.onlinePlaylists = [playlist]; source.activeView = 'online'; source.activeOnlinePlaylist = playlist; source.recommendation = null; source.cachedTracks = tracks; source.activePlaylistId = playlist.id; source.updatedAt = now();
       library.activeSourceId = source.id; library.activePlaylistId = playlist.id;
       return write(library) ? list() : { ok: false, error: 'save_failed' };
     } catch (error) {
@@ -599,31 +625,81 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
   async function browseOnlineCategories(payload) {
     const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80)); const platform = boundedText(payload?.platform, 40).toLowerCase();
     if (!source || !platform) return { ok: false, error: 'source_not_found' };
-    try { source.activePlatform = platform; source.categories = await fetchOnlineCategories(source, platform); source.onlinePlaylists = []; source.activeView = 'mine'; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
+    try { source.activePlatform = platform; source.categories = await fetchOnlineCategories(source, platform); source.onlinePlaylists = []; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
     catch (error) { return { ok: false, error: error?.message === 'invalid_catalog_response' ? error.message : 'categories_unavailable' }; }
   }
   async function browseOnlineSearch(payload) {
     const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80)); const platform = boundedText(payload?.platform, 40).toLowerCase();
     if (!source || !platform) return { ok: false, error: 'source_not_found' };
-    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineSearch(source, platform, payload?.keyword); source.categories = []; source.activeView = 'mine'; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
+    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineSearch(source, platform, payload?.keyword); source.categories = []; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
     catch (error) { return { ok: false, error: error?.message === 'invalid_catalog_response' ? error.message : 'playlist_search_unavailable' }; }
   }
   async function browseOnlineCategory(payload) {
     const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80)); const platform = boundedText(payload?.platform, 40).toLowerCase();
     if (!source || !platform) return { ok: false, error: 'source_not_found' };
-    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineCategory(source, platform, payload?.categoryId); source.categories = await fetchOnlineCategories(source, platform); source.activeView = 'mine'; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
+    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineCategory(source, platform, payload?.categoryId); source.categories = await fetchOnlineCategories(source, platform); return write(library) ? list() : { ok: false, error: 'save_failed' }; }
     catch (error) { return { ok: false, error: error?.message === 'invalid_catalog_response' ? error.message : 'category_playlists_unavailable' }; }
   }
   async function browseOnlineRecommend(payload) {
     const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80)); const platform = boundedText(payload?.platform, 40).toLowerCase();
     if (!source || !platform) return { ok: false, error: 'source_not_found' };
-    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineRecommend(source, platform); source.activeView = 'mine'; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
+    if (platform === 'kugou') {
+      try {
+        const response = await fetchKugouPersonalRecommendation(source);
+        const playlist = normalizeCatalogPlaylist({ id: 'online-kugou-personal', remoteId: 'kugou-personal', title: '猜你喜欢', source: 'kugou', kind: 'personal' });
+        const tracks = response.songs.map((item) => normalizeCatalogTrack(item, source.id, playlist.id)).filter(Boolean).slice(0, MAX_CATALOG_TRACKS);
+        if (!tracks.length) return { ok: false, error: 'recommended_songs_empty' };
+        playlist.trackCount = tracks.length;
+        source.activePlatform = platform; source.categories = []; source.onlinePlaylists = [playlist]; source.activeView = 'online'; source.activeOnlinePlaylist = playlist; source.cachedTracks = tracks; source.activePlaylistId = playlist.id; source.recommendation = { kind: 'kugou-personal', cursor: response.cursor, playlistId: playlist.id }; source.updatedAt = now();
+        library.activeSourceId = source.id; library.activePlaylistId = playlist.id;
+        return write(library) ? list() : { ok: false, error: 'save_failed' };
+      } catch (error) {
+        const code = boundedText(error?.message, 80);
+        if (code !== 'catalog_unavailable') return { ok: false, error: ['login_required', 'upstream_failed', 'invalid_catalog_response'].includes(code) ? code : 'recommended_songs_unavailable' };
+      }
+    }
+    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineRecommend(source, platform); return write(library) ? list() : { ok: false, error: 'save_failed' }; }
     catch (error) { return { ok: false, error: error?.message === 'invalid_catalog_response' ? error.message : 'recommended_playlists_unavailable' }; }
+  }
+  async function extendPersonalRecommendation(payload) {
+    const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80));
+    if (!source || source.recommendation?.kind !== 'kugou-personal' || source.recommendation.playlistId !== source.activePlaylistId) return { ok: false, error: 'recommendation_not_active' };
+    const current = source.cachedTracks.find((track) => track.id === boundedText(payload?.currentTrackId, 80));
+    if (!current) return { ok: false, error: 'not_found' };
+    let extra = {};
+    try { extra = current.extra ? JSON.parse(current.extra) : {}; } catch {}
+    try {
+      const response = await fetchKugouPersonalRecommendation(source, {
+        cursor: source.recommendation.cursor,
+        hash: extra.hash || current.songId,
+        songId: extra.audio_id || extra.song_id || '',
+        playTime: Number(payload?.playTime) || 0,
+        remainSongCount: Number(payload?.remainSongCount) || 0,
+        overplay: payload?.overplay === true,
+        exclude: source.cachedTracks.map((track) => track.songId),
+      });
+      const known = new Set(source.cachedTracks.map((track) => `${track.provider}:${track.songId}`));
+      const currentIndex = source.cachedTracks.findIndex((track) => track.id === current.id);
+      const requiredSpace = Math.max(0, source.cachedTracks.length + response.songs.length - MAX_CATALOG_TRACKS);
+      if (requiredSpace > 0 && currentIndex > 0) source.cachedTracks.splice(0, Math.min(requiredSpace, currentIndex));
+      let appended = 0;
+      for (const item of response.songs) {
+        const track = normalizeCatalogTrack(item, source.id, source.activePlaylistId);
+        if (!track || known.has(`${track.provider}:${track.songId}`) || source.cachedTracks.length >= MAX_CATALOG_TRACKS) continue;
+        known.add(`${track.provider}:${track.songId}`); source.cachedTracks.push(track); appended += 1;
+      }
+      source.recommendation.cursor = response.cursor || source.recommendation.cursor; source.activeOnlinePlaylist.trackCount = source.cachedTracks.length; source.updatedAt = now();
+      if (!write(library)) return { ok: false, error: 'save_failed' };
+      return { ...list(), appended };
+    } catch (error) {
+      const code = boundedText(error?.message, 80);
+      return { ok: false, error: ['login_required', 'upstream_failed', 'invalid_catalog_response'].includes(code) ? code : 'recommended_songs_unavailable' };
+    }
   }
   async function browseOnlineUserPlaylists(payload) {
     const library = read(); const source = library.sources.find((candidate) => candidate.id === boundedText(payload?.sourceId, 80)); const platform = boundedText(payload?.platform, 40).toLowerCase();
     if (!source || !platform) return { ok: false, error: 'source_not_found' };
-    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineUserPlaylists(source, platform); source.categories = []; source.activeView = 'mine'; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
+    try { source.activePlatform = platform; source.onlinePlaylists = await fetchOnlineUserPlaylists(source, platform); source.categories = []; return write(library) ? list() : { ok: false, error: 'save_failed' }; }
     catch (error) { return { ok: false, error: error?.message === 'invalid_catalog_response' ? error.message : 'user_playlists_unavailable' }; }
   }
   async function selectPlaylist(payload) {
@@ -642,7 +718,7 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
       const known = ['catalog_response_too_large', 'invalid_catalog_response'].includes(error?.message) ? error.message : 'playlist_unavailable';
       return { ok: false, error: known };
     }
-    source.activePlaylistId = playlistId; source.activeView = 'mine'; source.activeOnlinePlaylist = null; source.onlinePlaylists = []; source.updatedAt = now();
+    source.activePlaylistId = playlistId; source.activeView = 'mine'; source.activeOnlinePlaylist = null; source.onlinePlaylists = []; source.recommendation = null; source.updatedAt = now();
     library.activeSourceId = source.id; library.activePlaylistId = playlistId;
     return write(library) ? list() : { ok: false, error: 'save_failed' };
   }
@@ -663,7 +739,7 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
         try { source.categories = await fetchOnlineCategories(source, source.activePlatform); } catch { source.categories = []; }
       }
       const tracks = playlistId ? await fetchPlaylistTracks(source, playlistId) : [];
-      source.playlists = playlists; source.activePlaylistId = playlistId; source.activeView = 'mine'; source.activeOnlinePlaylist = null; source.onlinePlaylists = []; source.cachedTracks = tracks; source.updatedAt = now();
+      source.playlists = playlists; source.activePlaylistId = playlistId; source.activeView = 'mine'; source.activeOnlinePlaylist = null; source.onlinePlaylists = []; source.recommendation = null; source.cachedTracks = tracks; source.updatedAt = now();
       library.activeSourceId = source.id; library.activePlaylistId = playlistId;
     } catch (error) {
       const known = ['catalog_response_too_large', 'invalid_catalog_response'].includes(error?.message) ? error.message : 'catalog_unavailable';
@@ -733,20 +809,51 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
         if (!endpoint) return { ok: false, error: 'invalid_audio_url' };
         payload = await download(endpoint);
       } else {
-        const params = new URLSearchParams({ id: track.songId, source: track.provider, name: track.title, artist: track.artist, stream: '1' });
-        if (track.album) params.set('album', track.album);
-        if (track.cover) params.set('cover', track.cover);
-        if (track.extra) params.set('extra', track.extra);
-        payload = await catalogRequest(catalogSource.baseUrl, `/download?${params}`, { maxBytes: MAX_AUDIO_BYTES, timeout: 30000, responseType: 'bytes' });
+        const resolve = async (forceFallback = false) => {
+          const params = new URLSearchParams({ id: track.songId, source: track.provider, name: track.title, artist: track.artist });
+          if (track.album) params.set('album', track.album);
+          if (track.duration) params.set('duration', String(track.duration));
+          if (track.extra) params.set('extra', track.extra);
+          if (track.isVip) params.set('is_vip', '1');
+          if (forceFallback) params.set('force_fallback', '1');
+          return catalogRequest(catalogSource.baseUrl, `/api/playback/resolve?${params}`, { maxBytes: MAX_CATALOG_JSON_BYTES, timeout: 30000, responseType: 'json' });
+        };
+        const downloadResolved = async (resolution) => {
+          const selected = resolution?.track || track;
+          const params = new URLSearchParams({ id: selected.id || selected.songId, source: selected.source || selected.provider, name: selected.name || selected.title || track.title, artist: selected.artist || track.artist, stream: '1' });
+          if (selected.album || track.album) params.set('album', selected.album || track.album);
+          if (selected.cover || track.cover) params.set('cover', selected.cover || track.cover);
+          const extra = normalizedExtra(selected.extra || track.extra);
+          if (extra) params.set('extra', extra);
+          return catalogRequest(catalogSource.baseUrl, `/download?${params}`, { maxBytes: MAX_AUDIO_BYTES, timeout: 30000, responseType: 'bytes' });
+        };
+        let resolution;
+        try {
+          resolution = await resolve(false);
+          if (resolution?.ok !== true) return { ok: false, error: boundedText(resolution?.error, 80) || 'audio_unavailable', reason: boundedText(resolution?.fallback_reason, 80) };
+        } catch (error) {
+          if (error?.message !== 'catalog_unavailable') throw error;
+          resolution = { ok: true, fallback: false, playback_source: track.provider, track: { id: track.songId, source: track.provider, name: track.title, artist: track.artist, album: track.album, cover: track.cover, extra: track.extra } };
+        }
+        try {
+          payload = await downloadResolved(resolution);
+        } catch (error) {
+          if (resolution.fallback) throw error;
+          const fallback = await resolve(true);
+          if (fallback?.ok !== true) return { ok: false, error: boundedText(fallback?.error, 80) || 'audio_unavailable', reason: boundedText(fallback?.fallback_reason, 80) };
+          resolution = fallback;
+          payload = await downloadResolved(resolution);
+        }
+        payload.playback = { fallback: resolution.fallback === true, source: boundedText(resolution.playback_source, 40), reason: boundedText(resolution.fallback_reason, 80) };
       }
       if (!payload.bytes?.length || payload.bytes.length > MAX_AUDIO_BYTES) return { ok: false, error: 'audio_unavailable' };
-      return { ok: true, bytes: payload.bytes, mimeType: boundedText(payload.mimeType, 80) || track.mimeType };
+      return { ok: true, bytes: payload.bytes, mimeType: boundedText(payload.mimeType, 80) || track.mimeType, playback: payload.playback || null };
     } catch (error) {
       const known = ['audio_too_large', 'unsupported_audio'].includes(error?.message) ? error.message : 'audio_unavailable';
       return { ok: false, error: known };
     }
   }
-  return { list, setMode, addLocal, addFolder, addNetwork, addCatalogSource, selectPlaylist, refreshSource, removeCatalogSource, browseOnlineCategories, browseOnlineSearch, browseOnlineCategory, browseOnlineRecommend, browseOnlineUserPlaylists, browseOnlinePlaylist, remove, load, loadCover };
+  return { list, setMode, addLocal, addFolder, addNetwork, addCatalogSource, selectPlaylist, refreshSource, removeCatalogSource, browseOnlineCategories, browseOnlineSearch, browseOnlineCategory, browseOnlineRecommend, extendPersonalRecommendation, browseOnlineUserPlaylists, browseOnlinePlaylist, remove, load, loadCover };
 }
 
 module.exports = {

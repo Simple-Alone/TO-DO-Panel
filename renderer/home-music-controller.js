@@ -21,6 +21,7 @@
     let musicShuffle = storage.getItem(MUSIC_SHUFFLE_KEY) === 'true';
     let musicShuffleKey = '', musicShuffleRemaining = [];
     let musicPlaybackIntent = false, musicResumeAfterTabChange = false;
+    let musicRecommendPromise = null, musicRecommendRetryAt = 0, musicLibraryRevision = 0;
     let musicCatalogView = 'mine', homeMusicDiscoveryOpen = false;
     let homeMusicDiscoverySourceId = '', homeMusicDiscoveryCategoryId = '';
     let musicCoverTrackId = '', musicCoverObjectUrl = '', musicCoverEpoch = 0;
@@ -59,6 +60,7 @@
           playlists: Array.isArray(result.playlists) ? result.playlists : [],
           tracks: Array.isArray(result.tracks) ? result.tracks : [],
           browser: result.browser && typeof result.browser === 'object' ? result.browser : null,
+          recommendation: result.recommendation?.active === true ? result.recommendation : null,
         };
       }
       const mode = result.mode === 'network' ? 'network' : 'local';
@@ -173,6 +175,132 @@
       });
       select.value = selectedId || '';
     }
+    function musicCategoryPickerParts(select) {
+      const root = select?.closest('[data-music-category-picker]');
+      if (!root) return null;
+      return {
+        root,
+        trigger: root.querySelector('.music-category-trigger'),
+        label: root.querySelector('.music-category-trigger span'),
+        menu: root.querySelector('.music-category-menu'),
+      };
+    }
+    function closeMusicCategoryPicker(select, restoreFocus = false) {
+      const parts = musicCategoryPickerParts(select);
+      if (!parts) return;
+      parts.menu.hidden = true;
+      parts.root.dataset.open = 'false';
+      parts.trigger.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) parts.trigger.focus();
+    }
+    function openMusicCategoryPicker(select, direction = 0) {
+      const parts = musicCategoryPickerParts(select);
+      if (!parts || parts.trigger.disabled) return;
+      musicCategorySelects.forEach((candidate) => { if (candidate !== select) closeMusicCategoryPicker(candidate); });
+      parts.menu.hidden = false;
+      parts.root.dataset.open = 'true';
+      parts.trigger.setAttribute('aria-expanded', 'true');
+      const options = [...parts.menu.querySelectorAll('.music-category-option:not(:disabled)')];
+      const selected = parts.menu.querySelector('.music-category-option[aria-selected="true"]');
+      const target = direction < 0 ? options.at(-1) : selected || options[0];
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'nearest' });
+    }
+    function syncMusicCategoryPicker(select) {
+      const parts = musicCategoryPickerParts(select);
+      if (!parts) return;
+      const options = [...select.options];
+      const selected = options.find((option) => option.value === select.value) || options[0];
+      parts.label.textContent = selected?.textContent || '全部分类';
+      parts.trigger.disabled = select.disabled || !options.length;
+      parts.menu.replaceChildren();
+      options.forEach((option) => {
+        const item = documentRef.createElement('button');
+        item.type = 'button';
+        item.className = 'music-category-option';
+        item.dataset.value = option.value;
+        item.textContent = option.textContent;
+        item.disabled = option.disabled;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', String(option === selected));
+        parts.menu.append(item);
+      });
+      closeMusicCategoryPicker(select);
+    }
+    function setupMusicCategoryPicker(select) {
+      if (!select || select.closest('[data-music-category-picker]')) return;
+      const parentLabel = select.parentElement?.tagName === 'LABEL' ? select.parentElement : null;
+      if (parentLabel) {
+        const field = documentRef.createElement('div');
+        field.className = 'music-online-field';
+        while (parentLabel.firstChild) field.append(parentLabel.firstChild);
+        parentLabel.replaceWith(field);
+      }
+      const root = documentRef.createElement('div');
+      root.className = 'music-category-picker';
+      root.dataset.musicCategoryPicker = '';
+      const trigger = documentRef.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'music-category-trigger';
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.setAttribute('aria-controls', `${select.id}-menu`);
+      const label = documentRef.createElement('span');
+      const caret = documentRef.createElement('i');
+      caret.setAttribute('aria-hidden', 'true');
+      trigger.append(label, caret);
+      const menu = documentRef.createElement('div');
+      menu.id = `${select.id}-menu`;
+      menu.className = 'music-category-menu';
+      menu.hidden = true;
+      menu.setAttribute('role', 'listbox');
+      menu.setAttribute('aria-label', select.getAttribute('aria-label') || '歌单分类');
+      select.before(root);
+      root.append(trigger, menu, select);
+      select.hidden = true;
+      select.tabIndex = -1;
+      select.setAttribute('aria-hidden', 'true');
+      trigger.addEventListener('click', () => {
+        if (menu.hidden) openMusicCategoryPicker(select);
+        else closeMusicCategoryPicker(select, true);
+      });
+      trigger.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        openMusicCategoryPicker(select, event.key === 'ArrowUp' ? -1 : 1);
+      });
+      menu.addEventListener('click', (event) => {
+        const option = event.target.closest('.music-category-option');
+        if (!option || option.disabled) return;
+        select.value = option.dataset.value || '';
+        syncMusicCategoryPicker(select);
+        closeMusicCategoryPicker(select, true);
+        select.dispatchEvent(new windowRef.Event('change', { bubbles: true }));
+      });
+      menu.addEventListener('keydown', (event) => {
+        const options = [...menu.querySelectorAll('.music-category-option:not(:disabled)')];
+        const index = options.indexOf(documentRef.activeElement);
+        let target = null;
+        if (event.key === 'ArrowDown') target = options[Math.min(options.length - 1, index + 1)];
+        else if (event.key === 'ArrowUp') target = options[Math.max(0, index - 1)];
+        else if (event.key === 'Home') target = options[0];
+        else if (event.key === 'End') target = options.at(-1);
+        else if (event.key === 'Escape') { event.preventDefault(); closeMusicCategoryPicker(select, true); return; }
+        else if (event.key === 'Tab') { closeMusicCategoryPicker(select); return; }
+        if (!target) return;
+        event.preventDefault();
+        target.focus();
+        target.scrollIntoView({ block: 'nearest' });
+      });
+      syncMusicCategoryPicker(select);
+    }
+    const musicCategorySelects = [$('home-media-category-select'), $('music-category-select')].filter(Boolean);
+    musicCategorySelects.forEach(setupMusicCategoryPicker);
+    const closeMusicCategoryPickersOnPointerDown = (event) => musicCategorySelects.forEach((select) => {
+      const parts = musicCategoryPickerParts(select);
+      if (parts && !parts.root.contains(event.target)) closeMusicCategoryPicker(select);
+    });
+    documentRef.addEventListener('pointerdown', closeMusicCategoryPickersOnPointerDown);
     function homeDiscoverySource() {
       const selected = musicLibrary.sources.find((source) => source.id === homeMusicDiscoverySourceId && source.type === 'music-dl');
       return selected || (activeMusicSource()?.type === 'music-dl' ? activeMusicSource() : musicLibrary.sources.find((source) => source.type === 'music-dl')) || null;
@@ -192,12 +320,13 @@
       categorySelect.replaceChildren();
       const all = documentRef.createElement('option'); all.value = ''; all.textContent = '全部分类'; categorySelect.append(all);
       const platformCapability = browser?.platformSources?.find((item) => item.id === browser.activePlatform);
-      if (platformCapability?.recommend) { const option = documentRef.createElement('option'); option.value = '__recommend__'; option.textContent = '每日推荐'; categorySelect.append(option); }
+      if (platformCapability?.recommend) { const option = documentRef.createElement('option'); option.value = '__recommend__'; option.textContent = '猜你喜欢'; categorySelect.append(option); }
       if (platformCapability?.userPlaylists) { const option = documentRef.createElement('option'); option.value = '__user__'; option.textContent = '我的收藏夹'; categorySelect.append(option); }
       (browser?.categories || []).forEach((category) => { const option = documentRef.createElement('option'); option.value = category.id; option.textContent = category.group ? `${category.group} · ${category.name}` : category.name; categorySelect.append(option); });
       if ([...categorySelect.options].some((option) => option.value === homeMusicDiscoveryCategoryId)) categorySelect.value = homeMusicDiscoveryCategoryId;
       else if (homeMusicDiscoveryCategoryId) saveMusicDiscoveryFilter(source?.id || '', '');
       [sourceSelect, platformSelect, categorySelect, $('home-media-playlist-search'), $('home-media-playlist-search-form')].forEach((control) => { if (control) control.disabled = musicSelectionBusy; });
+      syncMusicCategoryPicker(categorySelect);
       const results = $('home-media-online-results');
       clearPlaylistArtwork(results);
       results.replaceChildren();
@@ -245,14 +374,17 @@
       if (platformSelect) { fillMusicSelect(platformSelect, Array.isArray(browser.platformSources) ? browser.platformSources : [], browser.activePlatform, (platform) => platform.name || platform.id); platformSelect.disabled = musicSelectionBusy || !platformSelect.options.length; }
       const categorySelect = $('music-category-select');
       if (categorySelect) {
+        const selectedCategory = categorySelect.value;
         const categories = Array.isArray(browser.categories) ? browser.categories : [];
         categorySelect.replaceChildren();
         const all = documentRef.createElement('option'); all.value = ''; all.textContent = '全部分类'; categorySelect.append(all);
         const platformCapability = browser.platformSources?.find((platform) => platform.id === browser.activePlatform);
-        if (platformCapability?.recommend) { const option = documentRef.createElement('option'); option.value = '__recommend__'; option.textContent = '每日推荐'; categorySelect.append(option); }
+        if (platformCapability?.recommend) { const option = documentRef.createElement('option'); option.value = '__recommend__'; option.textContent = '猜你喜欢'; categorySelect.append(option); }
         if (platformCapability?.userPlaylists) { const option = documentRef.createElement('option'); option.value = '__user__'; option.textContent = '我的收藏夹'; categorySelect.append(option); }
         categories.forEach((category) => { const option = documentRef.createElement('option'); option.value = category.id; option.textContent = category.group ? `${category.group} · ${category.name}` : category.name; categorySelect.append(option); });
+        if ([...categorySelect.options].some((option) => option.value === selectedCategory)) categorySelect.value = selectedCategory;
         categorySelect.disabled = musicSelectionBusy || !platformSelect?.value || categorySelect.options.length <= 1;
+        syncMusicCategoryPicker(categorySelect);
       }
       const onlineResults = $('music-online-results');
       if (onlineResults) {
@@ -301,22 +433,66 @@
       const list = $('music-library-list'); list.replaceChildren(); if (!queue.length) { const empty = documentRef.createElement('p'); empty.className = 'music-library-empty'; empty.textContent = '当前歌单没有歌曲'; list.append(empty); return; }
       queue.forEach((track) => { const row = documentRef.createElement('div'); row.className = `music-library-row${track.kind === 'catalog' ? ' is-readonly' : ''}`; row.dataset.trackId = track.id; const select = documentRef.createElement('button'); select.type = 'button'; select.className = 'music-library-select'; select.title = `播放 ${track.title}`; const copy = documentRef.createElement('span'); const title = documentRef.createElement('strong'); title.textContent = track.title; const detail = documentRef.createElement('small'); detail.textContent = track.detail || track.artist || track.provider || ''; copy.append(title, detail); select.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>'; select.append(copy); select.addEventListener('click', () => void loadMusicTrack(track, true)); row.append(select); if (track.kind !== 'catalog') { const remove = documentRef.createElement('button'); remove.type = 'button'; remove.className = 'music-library-remove'; remove.dataset.removeMusicTrack = track.id; remove.setAttribute('aria-label', `删除 ${track.title}`); remove.title = '从音乐库删除'; remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12"/></svg>'; row.append(remove); } list.append(row); });
     }
-    function applyMusicLibrary(result) { const normalized = normalizeMusicResult(result); if (!normalized) return false; musicLibrary = normalized; if (loadedMusicId && !musicLibrary.tracks.some((track) => track.id === loadedMusicId)) releaseMusicSource(); const track = activeMusicTrack(); rememberActiveMusic(track); renderMusicNavigation(); renderMusicCard(); renderMusicSettings(); return true; }
-    function musicError(result, fallback) { const errors = { invalid_catalog_url: '仅支持本机 go-music-dl HTTP 地址', catalog_unavailable: '无法连接 go-music-dl 服务', invalid_catalog_response: '音乐源返回的数据无效', catalog_response_too_large: '音乐源返回的数据超过限制', playlist_unavailable: '当前歌单读取失败', playlist_search_unavailable: '在线歌单搜索失败', categories_unavailable: '平台分类读取失败', category_playlists_unavailable: '分类歌单读取失败', recommended_playlists_unavailable: '每日推荐读取失败', user_playlists_unavailable: '在线收藏夹读取失败，请检查平台登录状态', source_not_found: '音乐源不存在', invalid_playlist: '在线歌单参数无效', source_limit: '最多添加 8 个聚合音乐源' }; return errors[result?.error] || fallback; }
-    function setMusicSelectionBusy(busy) { musicSelectionBusy = busy; [$('music-source-select'), $('music-playlist-select'), $('music-source-refresh'), $('music-catalog-refresh'), $('music-platform-select'), $('music-category-select'), $('music-playlist-search'), $('music-playlist-search-form'), $('home-media-source-select'), $('home-media-platform-select'), $('home-media-category-select'), $('home-media-playlist-search'), $('home-media-playlist-search-form'), ...documentRef.querySelectorAll('[data-music-catalog-view]')].filter(Boolean).forEach((control) => { control.disabled = busy; }); }
-    async function loadMusicTrack(track, autoplay) {
+    function applyMusicLibrary(result) { const normalized = normalizeMusicResult(result); if (!normalized) return false; musicLibrary = normalized; musicLibraryRevision += 1; if (loadedMusicId && !musicLibrary.tracks.some((track) => track.id === loadedMusicId)) releaseMusicSource(); const track = activeMusicTrack(); rememberActiveMusic(track); renderMusicNavigation(); renderMusicCard(); renderMusicSettings(); return true; }
+    function musicError(result, fallback) { const errors = { invalid_catalog_url: '仅支持本机 go-music-dl HTTP 地址', catalog_unavailable: '无法连接 go-music-dl 服务', invalid_catalog_response: '音乐源返回的数据无效', catalog_response_too_large: '音乐源返回的数据超过限制', playlist_unavailable: '当前歌单读取失败', playlist_search_unavailable: '在线歌单搜索失败', categories_unavailable: '平台分类读取失败', category_playlists_unavailable: '分类歌单读取失败', recommended_playlists_unavailable: '猜你喜欢读取失败', recommended_songs_unavailable: '酷狗猜你喜欢暂时不可用', recommended_songs_empty: '酷狗猜你喜欢暂时没有返回歌曲', login_required: '请先在 go-music 中登录酷狗账号', upstream_failed: '酷狗推荐服务暂时不可用', user_playlists_unavailable: '在线收藏夹读取失败，请检查平台登录状态', source_not_found: '音乐源不存在', invalid_playlist: '在线歌单参数无效', source_limit: '最多添加 8 个聚合音乐源' }; return errors[result?.error] || fallback; }
+    function setMusicSelectionBusy(busy) { musicSelectionBusy = busy; [$('music-source-select'), $('music-playlist-select'), $('music-source-refresh'), $('music-catalog-refresh'), $('music-platform-select'), $('music-category-select'), $('music-playlist-search'), $('music-playlist-search-form'), $('home-media-source-select'), $('home-media-platform-select'), $('home-media-category-select'), $('home-media-playlist-search'), $('home-media-playlist-search-form'), ...documentRef.querySelectorAll('[data-music-catalog-view]')].filter(Boolean).forEach((control) => { control.disabled = busy; }); musicCategorySelects.forEach(syncMusicCategoryPicker); }
+    async function maybeExtendPersonalRecommendation(track, feedback = {}) {
+      if (!musicLibrary.recommendation?.active || !track) return false;
+      const initialQueue = musicQueue(); const initialIndex = initialQueue.findIndex((item) => item.id === track.id);
+      const initialRemaining = initialIndex < 0 ? initialQueue.length : initialQueue.length - initialIndex - 1;
+      if (initialRemaining > 2) return true;
+      if (musicRecommendPromise) return musicRecommendPromise;
+      if (Date.now() < musicRecommendRetryAt) return false;
+      const sourceId = musicLibrary.sourceId; const playlistId = musicLibrary.playlistId;
+      const pending = (async () => {
+        let expectedRevision = musicLibraryRevision;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const queue = musicQueue(); const index = queue.findIndex((item) => item.id === track.id); const remaining = index < 0 ? queue.length : queue.length - index - 1;
+          if (remaining > 2) return true;
+          const result = await getApi()?.extendHomeMusicRecommend?.({ sourceId, currentTrackId: track.id, playTime: Math.max(0, Math.floor(Number(feedback.playTime) || 0)), remainSongCount: remaining, overplay: feedback.overplay === true }).catch(() => null);
+          if (musicLibraryRevision !== expectedRevision || musicLibrary.sourceId !== sourceId || musicLibrary.playlistId !== playlistId || !musicLibrary.recommendation?.active) return false;
+          if (!result?.ok) { musicRecommendRetryAt = Date.now() + 5000; return false; }
+          const previousLength = queue.length;
+          musicRecommendRetryAt = 0;
+          applyMusicLibrary(result);
+          expectedRevision = musicLibraryRevision;
+          if (Number(result.appended) > 0 || musicQueue().length > previousLength) return true;
+        }
+        musicRecommendRetryAt = Date.now() + 5000;
+        return false;
+      })();
+      musicRecommendPromise = pending;
+      try { return await pending; }
+      finally { if (musicRecommendPromise === pending) musicRecommendPromise = null; }
+    }
+    function nextUnattemptedTrack(track, attempted) {
+      const queue = musicQueue(); const index = Math.max(0, queue.findIndex((item) => item.id === track?.id));
+      for (let offset = 1; offset <= queue.length; offset += 1) {
+        const candidate = queue[(index + offset) % queue.length];
+        if (candidate && !attempted.has(candidate.id)) return candidate;
+      }
+      return null;
+    }
+    async function loadMusicTrack(track, autoplay, attempted = new Set()) {
       if (!track || musicLoading) return;
-      rememberActiveMusic(track); const epoch = ++musicLoadEpoch; musicLoading = true; renderMusicCard(); const result = await getApi()?.loadHomeMusicTrack?.(track.id).catch(() => null); if (epoch !== musicLoadEpoch) return;
-      if (!result?.ok) { releaseMusicSource(); renderMusicCard(); setText($('home-media-status'), result?.error === 'audio_too_large' ? '音频超过 128 MB 限制' : result?.error === 'unsupported_audio' ? '服务器返回的不是音频文件' : '音频读取失败，播放已停止'); return; }
-      const raw = result.bytes?.data || result.bytes; const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || []); if (!bytes.length) { releaseMusicSource(); renderMusicCard(); setText($('home-media-status'), '音频内容为空，播放已停止'); return; }
+      rememberActiveMusic(track); const epoch = ++musicLoadEpoch; musicLoading = true; renderMusicCard(); void maybeExtendPersonalRecommendation(track); const result = await getApi()?.loadHomeMusicTrack?.(track.id).catch(() => null); if (epoch !== musicLoadEpoch) return;
+      const raw = result?.bytes?.data || result?.bytes; const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || []);
+      if (!result?.ok || !bytes.length) {
+        musicLoading = false; attempted.add(track.id); const next = autoplay ? nextUnattemptedTrack(track, attempted) : null;
+        const loaded = musicQueue().find((item) => item.id === loadedMusicId); if (loaded) rememberActiveMusic(loaded);
+        renderMusicCard();
+        if (next) { setText($('home-media-status'), result?.reason === 'restricted' ? '当前歌曲受限，正在尝试其他歌曲…' : '当前歌曲不可播放，正在尝试下一首…'); await loadMusicTrack(next, true, attempted); return; }
+        setText($('home-media-status'), result?.error === 'audio_too_large' ? '音频超过 128 MB 限制' : result?.error === 'unsupported_audio' ? '服务器返回的不是音频文件' : result?.error === 'no_playable_source' ? '所有音源均不可播放，已跳过' : !bytes.length && result?.ok ? '音频内容为空，已跳过' : '音频读取失败，已跳过'); return;
+      }
       releaseMusicSource(); const sourceEpoch = ++musicLoadEpoch; musicLoading = true; rememberActiveMusic(track); musicObjectUrl = URL.createObjectURL(new Blob([bytes], { type: result.mimeType || track.mimeType || 'application/octet-stream' })); loadedMusicId = track.id; musicAudio.src = musicObjectUrl; musicAudio.load(); musicLoading = false; renderMusicCard();
       if (autoplay && sourceEpoch === musicLoadEpoch) { try { await musicAudio.play(); } catch { releaseMusicSource(); setText($('home-media-status'), '无法播放该音频格式，播放已停止'); } renderMusicCard(); }
+      if (result.playback?.fallback) setText($('home-media-status'), `已自动换源至 ${MUSIC_PROVIDER_LABELS[result.playback.source] || result.playback.source || '其他平台'}`);
     }
     async function switchMusicPlaylist(sourceId, playlistId) { if (musicSelectionBusy || !sourceId || !playlistId || (sourceId === musicLibrary.sourceId && playlistId === musicLibrary.playlistId)) return; setMusicSelectionBusy(true); setText($('music-settings-status'), '正在切换歌单…'); const result = await getApi()?.selectHomeMusicPlaylist?.({ sourceId, playlistId }).catch(() => null); setMusicSelectionBusy(false); if (!applyMusicLibrary(result)) { releaseMusicSource(); renderMusicNavigation(); setText($('music-settings-status'), musicError(result, '歌单切换失败')); return; } void ensureMusicSettingsCategories(); setText($('music-settings-status'), `已切换到 ${musicPlaylistLabel(activeMusicPlaylist(), activeMusicSource())}`); if (activeMusicTrack()) await loadMusicTrack(activeMusicTrack(), true); }
     async function browseMusicOnline(action, payload, successMessage) { if (musicSelectionBusy || !payload?.sourceId || !payload?.platform) return; setMusicSelectionBusy(true); setText($('music-settings-status'), '正在读取在线歌单…'); const result = await getApi()?.[action]?.(payload).catch(() => null); setMusicSelectionBusy(false); if (!applyMusicLibrary(result)) { renderMusicNavigation(); setText($('music-settings-status'), musicError(result, '在线歌单读取失败')); return; } setText($('music-settings-status'), successMessage); }
     async function selectOnlineMusicPlaylist(dataset) { if (musicSelectionBusy || !dataset?.platform || !dataset?.playlistId) return; setMusicSelectionBusy(true); setText($('music-settings-status'), '正在读取在线歌单…'); const result = await getApi()?.selectHomeMusicOnlinePlaylist?.({ sourceId: dataset.sourceId || musicLibrary.sourceId, platform: dataset.platform, playlistId: dataset.playlistId, title: dataset.title || '在线歌单' }).catch(() => null); setMusicSelectionBusy(false); musicCatalogView = 'discover'; if (!applyMusicLibrary(result)) { releaseMusicSource(); renderMusicNavigation(); setText($('music-settings-status'), musicError(result, '在线歌单读取失败')); return; } setText($('music-settings-status'), `已打开在线歌单 ${activeMusicPlaylist()?.title || ''}`); if (activeMusicTrack()) await loadMusicTrack(activeMusicTrack(), true); }
     async function refreshMusicLibrary(initial = false, sourceId = musicLibrary.sourceId) { if (musicSelectionBusy) return; setMusicSelectionBusy(true); const apiRef = getApi(); const request = initial || typeof apiRef?.refreshHomeMusicSource !== 'function' ? apiRef?.getHomeMusicLibrary : () => getApi()?.refreshHomeMusicSource(sourceId); const result = typeof request === 'function' ? await request().catch(() => null) : null; setMusicSelectionBusy(false); if (!applyMusicLibrary(result)) { if (!initial) releaseMusicSource(); renderMusicNavigation(); setText($('home-media-status'), musicError(result, '音乐库读取失败')); } else if (!initial) setText($('music-settings-status'), activeMusicSource()?.type === 'music-dl' ? '歌单已刷新' : '音乐库已刷新'); }
-    function moveMusic(direction, autoplay = musicPlaybackIntent || !musicAudio.paused) { const track = activeMusicTrack(); const queue = musicQueue(); if (!track || queue.length < 2) return; const index = queue.findIndex((item) => item.id === track.id); const next = musicShuffle ? shuffledMusicTrack(track, queue) : queue[(index + direction + queue.length) % queue.length]; if (autoplay) void loadMusicTrack(next, true); else { releaseMusicSource(); rememberActiveMusic(next); renderMusicCard(); } }
+    function moveMusic(direction, autoplay = musicPlaybackIntent || !musicAudio.paused) { const track = activeMusicTrack(); const queue = musicQueue(); if (!track || queue.length < 2) return; const index = queue.findIndex((item) => item.id === track.id); const next = musicShuffle ? shuffledMusicTrack(track, queue) : queue[(index + direction + queue.length) % queue.length]; if (autoplay) void loadMusicTrack(next, true); else { releaseMusicSource(); rememberActiveMusic(next); renderMusicCard(); void maybeExtendPersonalRecommendation(next); } }
     async function openMusicSettings() { await navigate({ tab: 'settings' }); windowRef.NotchSettings?.select('music'); }
 
     const storedMusicVolumeValue = storage.getItem('notch-home-music-volume-v1'); const storedMusicVolume = storedMusicVolumeValue === null ? Number.NaN : Number(storedMusicVolumeValue); const initialMusicVolume = Number.isFinite(storedMusicVolume) ? Math.max(0, Math.min(100, storedMusicVolume)) : 80; musicAudio.volume = initialMusicVolume / 100; $('music-volume').value = String(initialMusicVolume); setText($('music-volume-value'), `${Math.round(initialMusicVolume)}%`);
@@ -330,17 +506,17 @@
     documentRef.querySelector('[data-home-media="previous"]').addEventListener('click', () => moveMusic(-1)); documentRef.querySelector('[data-home-media="next"]').addEventListener('click', () => moveMusic(1));
     documentRef.querySelector('[data-home-media="shuffle"]').addEventListener('click', () => { musicShuffle = !musicShuffle; storage.setItem(MUSIC_SHUFFLE_KEY, String(musicShuffle)); resetMusicShuffle(); renderMusicCard(); });
     musicAudio.addEventListener('play', () => { musicPlaybackIntent = true; renderMusicCard(); }); musicAudio.addEventListener('pause', () => { if (!musicResumeAfterTabChange) musicPlaybackIntent = false; renderMusicCard(); }); musicAudio.addEventListener('loadedmetadata', () => { renderMusicProgress(); renderMusicCard(); }); musicAudio.addEventListener('timeupdate', renderMusicProgress);
-    musicAudio.addEventListener('ended', () => { musicPlaybackIntent = false; if (activeMusicTrack() && musicQueue().length > 1) moveMusic(1, true); else renderMusicCard(); }); musicAudio.addEventListener('error', () => { const failedSource = musicAudio.currentSrc || musicAudio.src; if (musicAudio.error && musicObjectUrl && failedSource === musicObjectUrl) { releaseMusicSource(); renderMusicCard(); setText($('home-media-status'), '无法解码该音频格式，播放已停止'); } });
+    musicAudio.addEventListener('ended', async () => { musicPlaybackIntent = false; const track = activeMusicTrack(); await maybeExtendPersonalRecommendation(track, { playTime: musicAudio.currentTime, overplay: true }); if (track && musicQueue().length > 1) moveMusic(1, true); else renderMusicCard(); }); musicAudio.addEventListener('error', () => { const failedSource = musicAudio.currentSrc || musicAudio.src; if (musicAudio.error && musicObjectUrl && failedSource === musicObjectUrl) { const failedTrack = musicQueue().find((track) => track.id === loadedMusicId); const attempted = new Set(failedTrack ? [failedTrack.id] : []); const next = nextUnattemptedTrack(failedTrack, attempted); releaseMusicSource(); renderMusicCard(); if (next) void loadMusicTrack(next, true, attempted); else setText($('home-media-status'), '无法解码该音频格式，播放已停止'); } });
     documentRef.addEventListener('notch:tabchange', (event) => { if (event.detail?.tab === 'home' || musicAudio.paused || musicAudio.ended || !loadedMusicId) return; musicResumeAfterTabChange = true; const epoch = musicLoadEpoch; setTimeout(async () => { if (!musicResumeAfterTabChange || epoch !== musicLoadEpoch || musicAudio.ended) { musicResumeAfterTabChange = false; return; } if (!musicAudio.paused) { musicResumeAfterTabChange = false; return; } try { await musicAudio.play(); } catch {} musicResumeAfterTabChange = false; renderMusicCard(); }, 0); });
     $('home-media-source-select').addEventListener('change', (event) => { saveMusicDiscoveryFilter(event.target.value, ''); renderHomeMusicDiscovery(); void ensureHomeMusicCategories(); });
     windowRef.addEventListener('notch:settings-category-change', (event) => { if (event.detail?.id === 'music') void ensureMusicSettingsCategories(); });
     $('home-media-platform-select').addEventListener('change', (event) => { saveMusicDiscoveryFilter(homeDiscoverySource()?.id || '', ''); void browseMusicOnline('browseHomeMusicCategories', { sourceId: homeDiscoverySource()?.id, platform: event.target.value }, '已加载平台分类'); });
-    $('home-media-category-select').addEventListener('change', (event) => { const sourceId = homeDiscoverySource()?.id; const platform = $('home-media-platform-select').value; const categoryId = event.target.value; saveMusicDiscoveryFilter(sourceId || '', categoryId); if (categoryId === '__recommend__') void browseMusicOnline('browseHomeMusicRecommend', { sourceId, platform }, '已加载每日推荐'); else if (categoryId === '__user__') void browseMusicOnline('browseHomeMusicUserPlaylists', { sourceId, platform }, '已加载我的收藏夹'); else if (categoryId) void browseMusicOnline('browseHomeMusicCategory', { sourceId, platform, categoryId }, '已加载分类歌单'); else void browseMusicOnline('browseHomeMusicCategories', { sourceId, platform }, '已加载平台分类'); });
+    $('home-media-category-select').addEventListener('change', (event) => { const sourceId = homeDiscoverySource()?.id; const platform = $('home-media-platform-select').value; const categoryId = event.target.value; saveMusicDiscoveryFilter(sourceId || '', categoryId); if (categoryId === '__recommend__') void browseMusicOnline('browseHomeMusicRecommend', { sourceId, platform }, '已加载猜你喜欢'); else if (categoryId === '__user__') void browseMusicOnline('browseHomeMusicUserPlaylists', { sourceId, platform }, '已加载我的收藏夹'); else if (categoryId) void browseMusicOnline('browseHomeMusicCategory', { sourceId, platform, categoryId }, '已加载分类歌单'); else void browseMusicOnline('browseHomeMusicCategories', { sourceId, platform }, '已加载平台分类'); });
     $('home-media-playlist-search-form').addEventListener('submit', (event) => { event.preventDefault(); const sourceId = homeDiscoverySource()?.id; const platform = $('home-media-platform-select').value; const keyword = $('home-media-playlist-search').value.trim(); if (!sourceId || !platform || !keyword) { $('home-media-playlist-search').focus(); return; } void browseMusicOnline('searchHomeMusicPlaylists', { sourceId, platform, keyword }, '已加载在线歌单搜索结果'); });
     $('music-source-select').addEventListener('change', (event) => { const source = musicLibrary.sources.find((candidate) => candidate.id === event.target.value); const playlist = source?.playlists?.[0]; if (playlist) void switchMusicPlaylist(source.id, playlist.id); else if (source) void refreshMusicLibrary(false, source.id); }); $('music-playlist-select').addEventListener('change', (event) => void switchMusicPlaylist(musicLibrary.sourceId, event.target.value)); $('music-source-refresh').addEventListener('click', () => void refreshMusicLibrary()); $('music-catalog-refresh').addEventListener('click', () => void refreshMusicLibrary());
     documentRef.querySelectorAll('[data-music-catalog-view]').forEach((button) => button.addEventListener('click', () => { musicCatalogView = button.dataset.musicCatalogView === 'discover' ? 'discover' : 'mine'; renderMusicNavigation(); renderMusicSettings(); }));
     $('music-platform-select')?.addEventListener('change', (event) => void browseMusicOnline('browseHomeMusicCategories', { sourceId: musicLibrary.sourceId, platform: event.target.value }, '已加载平台分类'));
-    $('music-category-select')?.addEventListener('change', (event) => { const platform = $('music-platform-select')?.value; const categoryId = event.target.value; if (categoryId === '__recommend__') void browseMusicOnline('browseHomeMusicRecommend', { sourceId: musicLibrary.sourceId, platform }, '已加载每日推荐'); else if (categoryId === '__user__') void browseMusicOnline('browseHomeMusicUserPlaylists', { sourceId: musicLibrary.sourceId, platform }, '已加载我的收藏夹'); else if (categoryId) void browseMusicOnline('browseHomeMusicCategory', { sourceId: musicLibrary.sourceId, platform, categoryId }, '已加载分类歌单'); else void browseMusicOnline('browseHomeMusicCategories', { sourceId: musicLibrary.sourceId, platform }, '已加载平台分类'); });
+    $('music-category-select')?.addEventListener('change', (event) => { const platform = $('music-platform-select')?.value; const categoryId = event.target.value; if (categoryId === '__recommend__') void browseMusicOnline('browseHomeMusicRecommend', { sourceId: musicLibrary.sourceId, platform }, '已加载猜你喜欢'); else if (categoryId === '__user__') void browseMusicOnline('browseHomeMusicUserPlaylists', { sourceId: musicLibrary.sourceId, platform }, '已加载我的收藏夹'); else if (categoryId) void browseMusicOnline('browseHomeMusicCategory', { sourceId: musicLibrary.sourceId, platform, categoryId }, '已加载分类歌单'); else void browseMusicOnline('browseHomeMusicCategories', { sourceId: musicLibrary.sourceId, platform }, '已加载平台分类'); });
     $('music-playlist-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const platform = $('music-platform-select')?.value; const keyword = $('music-playlist-search')?.value.trim(); if (!keyword) { $('music-playlist-search')?.focus(); return; } void browseMusicOnline('searchHomeMusicPlaylists', { sourceId: musicLibrary.sourceId, platform, keyword }, '已加载在线歌单搜索结果'); });
 
     async function importLocalMusic(kind) { if (musicImporting) return; musicImporting = true; const buttons = [$('music-local-add'), $('music-local-add-folder')]; buttons.forEach((button) => { button.disabled = true; }); setText($('music-settings-status'), kind === 'folder' ? '正在扫描文件夹…' : '正在读取所选文件…'); const apiRef = getApi(); const request = kind === 'folder' ? apiRef?.chooseHomeMusicFolder : apiRef?.chooseHomeMusicFiles; const result = typeof request === 'function' ? await request().catch(() => null) : null; musicImporting = false; buttons.forEach((button) => { button.disabled = false; }); if (result?.error === 'cancelled') { setText($('music-settings-status'), ''); return; } if (!applyMusicLibrary(result)) { const errors = { track_limit: '音乐库最多保存 200 首', invalid_folder: '无法读取所选文件夹' }; setText($('music-settings-status'), errors[result?.error] || '没有添加音频，请检查格式或文件大小'); return; } if (!(result.added > 0)) { setText($('music-settings-status'), kind === 'folder' ? '文件夹中没有新的受支持音频' : '所选文件已存在或不符合大小限制'); return; } const suffix = result.limitReached ? '，音乐库已达到 200 首' : result.truncated ? '，已达到 10,000 项扫描上限' : ''; setText($('music-settings-status'), `已添加 ${result.added} 首本地音乐${suffix}`); }
@@ -351,7 +527,7 @@
     $('music-library-list').addEventListener('click', async (event) => { const remove = event.target.closest('[data-remove-music-track]'); if (!remove) return; const removingCurrent = remove.dataset.removeMusicTrack === activeMusicId; const result = await getApi()?.removeHomeMusicTrack?.(remove.dataset.removeMusicTrack).catch(() => null); if (result?.ok && removingCurrent) releaseMusicSource(); if (!applyMusicLibrary(result)) setText($('music-settings-status'), '音乐删除失败'); else setText($('music-settings-status'), '已从音乐库移除'); });
     void refreshMusicLibrary(true);
 
-    function dispose() { musicArtworkObserver.disconnect(); musicArtworkUrls.forEach((url) => URL.revokeObjectURL(url)); musicArtworkUrls.clear(); clearMusicCover(); releaseMusicSource(); }
+    function dispose() { documentRef.removeEventListener('pointerdown', closeMusicCategoryPickersOnPointerDown); musicArtworkObserver.disconnect(); musicArtworkUrls.forEach((url) => URL.revokeObjectURL(url)); musicArtworkUrls.clear(); clearMusicCover(); releaseMusicSource(); }
     return Object.freeze({ dispose, refresh: refreshMusicLibrary });
   }
 

@@ -134,12 +134,17 @@ test('music library migrates v1 data and switches go-music-dl playlists through 
   const catalogRequest = async (baseUrl, route, options) => {
     calls.push({ baseUrl, route, responseType: options.responseType });
     if (route === '/healthz') return { app: 'go-music-dl', status: 'ok' };
-    if (route === '/api/playlist/sources') return { sources: [{ id: 'netease', name: '网易云音乐', search: true, categories: true, user_playlists: true }] };
+    if (route === '/api/playlist/sources') return { sources: [{ id: 'netease', name: '网易云音乐', search: true, categories: true, recommend: true, user_playlists: true }] };
     if (route === '/api/playlist/user?source=netease&page=1&limit=100') return { playlists: [{ id: 'favorite-1', name: '我的收藏', source: 'netease', track_count: 4 }] };
     if (route === '/api/playlist/categories?source=netease') return { categories: [{ id: '华语', name: '华语', group: '语种', hot: true }] };
     if (route.startsWith('/api/playlist/search?source=netease')) return { playlists: [{ id: 'online-1', name: '平台精选', source: 'netease', cover: '//img.example.test/playlist.jpg', track_count: 3 }] };
     if (route.startsWith('/api/playlist/category?source=netease')) return { playlists: [{ id: 'online-2', name: '华语新歌', source: 'netease', track_count: 2 }] };
+    if (route === '/api/playlist/recommend?source=netease') return { playlists: [{ id: 'recommend-1', name: '猜你喜欢', source: 'netease', track_count: 12 }] };
     if (route === '/api/playlist/songs?source=netease&id=online-1') return { songs: [{ id: 'online-song', source: 'netease', name: '在线歌曲', artist: '在线歌手', duration: 210 }] };
+    if (route.startsWith('/api/playback/resolve?')) {
+      const query = new URL(`http://loopback${route}`).searchParams;
+      return { ok: true, fallback: false, playback_source: query.get('source'), track: { id: query.get('id'), source: query.get('source'), name: query.get('name'), artist: query.get('artist') } };
+    }
     if (route.startsWith('/collections?')) return [
       { id: 11, name: '晨间歌单', source: 'netease', cover: 'https://img.example.test/playlist.jpg', track_count: 2 },
       { id: 22, name: '夜间歌单', source: 'qq', track_count: 1 },
@@ -179,6 +184,9 @@ test('music library migrates v1 data and switches go-music-dl playlists through 
   const onlineFavorites = await library.browseOnlineUserPlaylists({ sourceId: 'catalog-catalog-source', platform: 'netease' });
   assert.equal(onlineFavorites.browser.onlinePlaylists[0].title, '我的收藏');
   assert.equal(onlineFavorites.browser.onlinePlaylists[0].remoteId, 'favorite-1');
+  const recommendations = await library.browseOnlineRecommend({ sourceId: 'catalog-catalog-source', platform: 'netease' });
+  assert.equal(recommendations.browser.onlinePlaylists[0].title, '猜你喜欢');
+  assert.equal(recommendations.browser.onlinePlaylists[0].remoteId, 'recommend-1');
   const onlineSearch = await library.browseOnlineSearch({ sourceId: 'catalog-catalog-source', platform: 'netease', keyword: '精选' });
   assert.equal(onlineSearch.browser.onlinePlaylists[0].title, '平台精选');
   assert.equal(onlineSearch.playlists[0].title, '晨间歌单', 'online results do not replace my playlists');
@@ -205,6 +213,80 @@ test('music library migrates v1 data and switches go-music-dl playlists through 
   assert.equal(restored.playlistId, '22');
   assert.equal(restored.tracks[0].title, '第二首');
   assert.equal(library.removeCatalogSource('catalog-catalog-source').sourceId, 'built-in');
+});
+
+test('Kugou personal recommendations extend continuously and resolve restricted tracks from another source', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'notch-music-personal-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const calls = [];
+  const catalogRequest = async (_baseUrl, route, options) => {
+    calls.push({ route, responseType: options.responseType });
+    if (route === '/healthz') return { app: 'go-music-dl', status: 'ok' };
+    if (route === '/api/playlist/sources') return { sources: [{ id: 'kugou', name: '酷狗音乐', categories: true, recommend: true }] };
+    if (route === '/api/playlist/categories?source=kugou') return { categories: [{ id: 'language', name: '语种' }] };
+    if (route.startsWith('/collections?')) return [];
+    if (route.startsWith('/api/recommend/kugou/songs?action=login')) return {
+      ok: true,
+      cursor: 'cursor-1',
+      songs: [
+        { id: 'kg-1', source: 'kugou', name: '第一首', artist: '歌手', duration: 180, extra: { hash: 'HASH-1', audio_id: '101', privilege: '10' } },
+        { id: 'kg-2', source: 'kugou', name: '第二首', artist: '歌手', duration: 181 },
+        { id: 'kg-3', source: 'kugou', name: '第三首', artist: '歌手', duration: 182 },
+      ],
+    };
+    if (route.startsWith('/api/recommend/kugou/songs?action=play')) return {
+      ok: true,
+      cursor: 'cursor-2',
+      songs: [
+        { id: 'kg-3', source: 'kugou', name: '第三首', artist: '歌手', duration: 182 },
+        { id: 'kg-4', source: 'kugou', name: '第四首', artist: '歌手', duration: 183 },
+      ],
+    };
+    if (route.startsWith('/api/playback/resolve?')) return { ok: true, fallback: true, fallback_reason: 'restricted', playback_source: 'qq', track: { id: 'qq-1', source: 'qq', name: '第一首', artist: '歌手', duration: 180 } };
+    if (route.startsWith('/download?')) return { bytes: Buffer.from('fallback-audio'), mimeType: 'audio/mpeg' };
+    throw Error(`unexpected route: ${route}`);
+  };
+  const library = createMusicLibrary({ filePath: path.join(directory, 'music-library.json'), uuid: () => 'personal-source', now: () => 123, catalogRequest });
+  assert.equal((await library.addCatalogSource({ baseUrl: 'http://localhost:8080/music' })).ok, true);
+
+  const initial = await library.browseOnlineRecommend({ sourceId: 'catalog-personal-source', platform: 'kugou' });
+  assert.equal(initial.ok, true);
+  assert.equal(initial.playlistId, 'online-kugou-personal');
+  assert.equal(initial.recommendation.active, true);
+  assert.deepEqual(initial.tracks.map((track) => track.title), ['第一首', '第二首', '第三首']);
+
+  const browsed = await library.browseOnlineCategories({ sourceId: initial.sourceId, platform: 'kugou' });
+  assert.equal(browsed.playlistId, 'online-kugou-personal');
+  assert.equal(browsed.recommendation.active, true);
+  assert.deepEqual(browsed.tracks.map((track) => track.title), ['第一首', '第二首', '第三首']);
+
+  const extended = await library.extendPersonalRecommendation({ sourceId: initial.sourceId, currentTrackId: initial.tracks[0].id, playTime: 75, remainSongCount: 2 });
+  assert.equal(extended.appended, 1);
+  assert.deepEqual(extended.tracks.map((track) => track.title), ['第一首', '第二首', '第三首', '第四首']);
+  const continuation = new URL(`http://loopback${calls.find((call) => call.route.startsWith('/api/recommend/kugou/songs?action=play')).route}`);
+  assert.equal(continuation.searchParams.get('cursor'), 'cursor-1');
+  assert.equal(continuation.searchParams.get('hash'), 'HASH-1');
+  assert.equal(continuation.searchParams.get('song_id'), '101');
+  assert.equal(continuation.searchParams.get('remain_songcnt'), '2');
+
+  const loaded = await library.load(initial.tracks[0].id);
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.bytes.toString(), 'fallback-audio');
+  assert.deepEqual(loaded.playback, { fallback: true, source: 'qq', reason: 'restricted' });
+  const download = new URL(`http://loopback${calls.find((call) => call.route.startsWith('/download?')).route}`);
+  assert.equal(download.searchParams.get('id'), 'qq-1');
+  assert.equal(download.searchParams.get('source'), 'qq');
+
+  const stored = JSON.parse(fs.readFileSync(path.join(directory, 'music-library.json'), 'utf8'));
+  stored.sources[0].activeView = 'mine';
+  stored.sources[0].activePlaylistId = '';
+  stored.sources[0].recommendation = null;
+  stored.sources[0].cachedTracks.forEach((track) => { track.playlistId = ''; });
+  fs.writeFileSync(path.join(directory, 'music-library.json'), JSON.stringify(stored));
+  const recovered = createMusicLibrary({ filePath: path.join(directory, 'music-library.json'), catalogRequest }).list();
+  assert.equal(recovered.playlistId, 'online-kugou-personal');
+  assert.equal(recovered.recommendation.active, true);
+  assert.equal(recovered.tracks.length, 4);
 });
 
 test('go-music-dl requests stay on loopback and preserve the configured base path', async (t) => {

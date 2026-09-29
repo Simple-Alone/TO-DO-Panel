@@ -11,6 +11,7 @@ function registerHomeIpc({ ipcMain, weatherService, musicLibrary, showOwnedOpenD
   ipcMain.handle('home:music-search-playlists', (_event, payload) => musicLibrary.browseOnlineSearch(payload));
   ipcMain.handle('home:music-browse-category', (_event, payload) => musicLibrary.browseOnlineCategory(payload));
   ipcMain.handle('home:music-browse-recommend', (_event, payload) => musicLibrary.browseOnlineRecommend(payload));
+  ipcMain.handle('home:music-extend-recommend', (_event, payload) => musicLibrary.extendPersonalRecommendation(payload));
   ipcMain.handle('home:music-browse-user-playlists', (_event, payload) => musicLibrary.browseOnlineUserPlaylists(payload));
   ipcMain.handle('home:music-select-online-playlist', (_event, payload) => musicLibrary.browseOnlinePlaylist(payload));
   ipcMain.handle('home:music-choose-files', async () => {
