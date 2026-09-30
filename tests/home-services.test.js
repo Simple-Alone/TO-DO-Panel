@@ -5,7 +5,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { createWeatherService } = require('../home-services');
-const { createMusicLibrary, normalizeLibrary, normalizeMusicDlBaseUrl, requestLoopbackCatalog, resolvePublicAudioUrl } = require('../home-media');
+const { createMusicLibrary, normalizeLibrary, normalizeMusicDlBaseUrl, requestLoopbackCatalog, requestMusicDlCatalog, resolvePublicAudioUrl } = require('../home-media');
 const { validateRequest, normalizeResponse } = require('../ai/schema');
 const { actionPrompt } = require('../ai/prompts');
 
@@ -121,14 +121,16 @@ test('network music rejects private hosts, credentials and unsupported URLs', as
   assert.equal(await resolvePublicAudioUrl('https://example.com/song.mp3', async () => [{ address: '203.0.113.10', family: 4 }]), null);
 });
 
-test('music library migrates v1 data and switches go-music-dl playlists through a loopback adapter', async (t) => {
+test('music library migrates v1 data and switches go-music-dl playlists through a configured adapter', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'todo-music-catalog-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const filePath = path.join(directory, 'music-library.json');
   fs.writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, mode: 'network', tracks: [] }));
   assert.deepEqual(normalizeLibrary(JSON.parse(fs.readFileSync(filePath))).activePlaylistId, 'network');
   assert.equal(normalizeMusicDlBaseUrl('http://localhost:8080/music/'), 'http://127.0.0.1:8080/music');
-  for (const invalid of ['https://localhost:8080/music', 'http://example.com/music', 'http://user:pass@localhost/music']) assert.equal(normalizeMusicDlBaseUrl(invalid), null);
+  assert.equal(normalizeMusicDlBaseUrl('http://100.64.12.34:18080/music/'), 'http://100.64.12.34:18080/music');
+  assert.equal(normalizeMusicDlBaseUrl('http://[fd7a:115c:a1e0::1234]:18080/music/'), 'http://[fd7a:115c:a1e0::1234]:18080/music');
+  for (const invalid of ['https://localhost:8080/music', 'http://example.com/music', 'http://192.168.1.2/music', 'http://100.63.12.34/music', 'http://user:pass@localhost/music']) assert.equal(normalizeMusicDlBaseUrl(invalid), null);
 
   const calls = [];
   const catalogRequest = async (baseUrl, route, options) => {
@@ -289,7 +291,7 @@ test('Kugou personal recommendations extend continuously and resolve restricted 
   assert.equal(recovered.tracks.length, 4);
 });
 
-test('go-music-dl requests stay on loopback and preserve the configured base path', async (t) => {
+test('go-music-dl requests use the configured host and preserve the configured base path', async (t) => {
   const paths = [];
   const server = http.createServer((request, response) => {
     paths.push(request.url);
@@ -313,6 +315,24 @@ test('go-music-dl requests stay on loopback and preserve the configured base pat
   assert.deepEqual(paths, ['/music/healthz', '/music/cover_proxy']);
   await assert.rejects(requestLoopbackCatalog(`http://127.0.0.1:${address.port}/music`, '/redirect'), /catalog_unavailable/);
   await assert.rejects(requestLoopbackCatalog('http://example.com/music', '/healthz'), /invalid_catalog_url/);
+});
+
+test('go-music-dl requests preserve a configured Tailscale host', async (t) => {
+  const server = http.createServer((request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ app: 'go-music-dl', status: 'ok' }));
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const requestClient = {
+    request(options, callback) {
+      assert.equal(options.hostname, '100.64.12.34');
+      return http.request({ ...options, hostname: '127.0.0.1' }, callback);
+    },
+  };
+  const health = await requestMusicDlCatalog(`http://100.64.12.34:${address.port}/music`, '/healthz', { requestClient });
+  assert.equal(health.status, 'ok');
 });
 
 test('chat preserves real roles and rejects system injection, oversized and unpaired history', () => {

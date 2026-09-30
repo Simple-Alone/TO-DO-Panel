@@ -2,10 +2,16 @@
 
 | 电脑 | 下载文件 | 安装方式 |
 | --- | --- | --- |
-| Mac · Apple Silicon · macOS 13+ | [下载 macOS 安装包（.dmg）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.1/Dynamic-Panel-1.2.1-arm64.dmg) | 打开 DMG，将应用拖入「应用程序」 |
-| Windows 10/11 · Intel / AMD 64 位（x64） | [下载 Windows 安装包（.exe）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.1/Dynamic-Panel-1.2.1-windows-x64-setup.exe) | 双击 EXE，按安装向导完成安装 |
+| Mac · Apple Silicon · macOS 13+ | [下载 macOS 安装包（.dmg）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.2/Dynamic-Panel-1.2.2-arm64.dmg) | 打开 DMG，将应用拖入「应用程序」 |
+| Windows 10/11 · Intel / AMD 64 位（x64） | [下载 Windows 安装包（.exe）](https://github.com/Simple-Alone/TO-DO-Panel/releases/download/v1.2.2/Dynamic-Panel-1.2.2-windows-x64-setup.exe) | 双击 EXE，按安装向导完成安装 |
 
 Release 同时提供两个安装包对应的 `.sha256` 完整性校验文件。
+
+## 1.2.2
+
+- go-music-dl 音乐源支持用户配置的回环或 Tailscale HTTP 地址，不再强制连接 `127.0.0.1`。
+- 音乐在线发现和连续推荐支持受限歌曲自动跨平台换源，并保留有界请求和来源校验。
+- 修复 macOS 面板收起、双刘海和跨显示器定位的稳定性问题。
 
 ## 1.2.1
 

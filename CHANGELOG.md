@@ -4,6 +4,10 @@
 
 ## [未发布]
 
+暂无。
+
+## [1.2.2] - 2026-09-30
+
 ### 桌面
 
 - 修复 macOS 面板失焦收起时旧展开区域短暂残留矩形框的问题；透明主窗口改用已有 CSS 面板阴影，不再保留覆盖整个窗口边界的系统原生阴影。新增独立真实焦点转移回归命令 `npm run test:panel-blur`。
@@ -11,6 +15,7 @@
 - 修复 macOS 面板收起后偶发出现上下两个刘海的问题；收起阶段与折叠终态改由独立刘海窗口统一绘制并接收点击，透明主窗口不再重复显示或拦截下层应用。
 - 音乐在线发现新增固定高度分类菜单与「猜你喜欢」入口；酷狗个性化歌曲流会在队列剩余两首时持续续拉，暂停切歌和间断收听也不会停在首批歌曲。
 - 音乐播放遇到 VIP、版权受限或不可播放歌曲时，会先按歌名、歌手、时长和实际可播放性尝试其它平台版本，全部音源均不可用后才跳过。
+- go-music-dl 音乐源支持用户配置的回环或 Tailscale HTTP 地址，保留无凭据、超时、响应大小和重定向防护。
 
 ## [1.2.1] - 2026-09-24
 
@@ -190,7 +195,8 @@
 
 - 首个稳定版本，建立固定命名的 Apple Silicon DMG 发布流程。
 
-[未发布]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.1...HEAD
+[未发布]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Simple-Alone/TO-DO-Panel/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Simple-Alone/TO-DO-Panel/releases/tag/v1.2.0
 [1.1.0]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.7...v1.1.0

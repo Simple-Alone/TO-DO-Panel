@@ -4,6 +4,7 @@ const dns = require('node:dns');
 const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
+const net = require('node:net');
 const path = require('node:path');
 const { isPrivateAddress } = require('./main-services');
 
@@ -17,6 +18,10 @@ const MAX_CATALOG_PLAYLISTS = 100;
 const MAX_CATALOG_TRACKS = 1000;
 const MAX_CATALOG_JSON_BYTES = 2 * 1024 * 1024;
 const BUILTIN_SOURCE_ID = 'built-in';
+const TAILSCALE_IPV4_PREFIX = 100;
+const TAILSCALE_IPV4_MIN_SECOND_OCTET = 64;
+const TAILSCALE_IPV4_MAX_SECOND_OCTET = 127;
+const TAILSCALE_IPV6_PREFIX = 'fd7a:115c:a1e0:';
 const MIME_TYPES = {
   mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav',
   ogg: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', webm: 'audio/webm',
@@ -130,12 +135,24 @@ function normalizeCatalogCategory(value) {
   return { id, name: boundedText(value?.name, 120) || id, group: boundedText(value?.group, 80), count: Math.max(0, Number(value?.count) || 0), hot: value?.hot === true };
 }
 
+function isAllowedMusicDlHost(hostname) {
+  const address = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (address === 'localhost' || address === '127.0.0.1' || address === '::1') return true;
+  const version = net.isIP(address);
+  if (version === 4) {
+    const octets = address.split('.').map(Number);
+    return octets[0] === TAILSCALE_IPV4_PREFIX
+      && octets[1] >= TAILSCALE_IPV4_MIN_SECOND_OCTET
+      && octets[1] <= TAILSCALE_IPV4_MAX_SECOND_OCTET;
+  }
+  return version === 6 && address.startsWith(TAILSCALE_IPV6_PREFIX);
+}
+
 function normalizeMusicDlBaseUrl(value) {
   let url;
   try { url = new URL(boundedText(value, 300)); } catch { return null; }
   const hostname = url.hostname.toLowerCase();
-  const loopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
-  if (url.protocol !== 'http:' || !loopback || url.username || url.password || url.search || url.hash) return null;
+  if (url.protocol !== 'http:' || !isAllowedMusicDlHost(hostname) || url.username || url.password || url.search || url.hash) return null;
   if (url.port && (!/^\d+$/.test(url.port) || Number(url.port) < 1 || Number(url.port) > 65535)) return null;
   url.hostname = hostname === 'localhost' ? '127.0.0.1' : hostname;
   url.pathname = `/${url.pathname.split('/').filter(Boolean).join('/')}`;
@@ -303,20 +320,21 @@ function downloadRemoteAudio(endpoint) {
   });
 }
 
-function requestLoopbackCatalog(baseUrl, route, { maxBytes = MAX_CATALOG_JSON_BYTES, timeout = 20000, responseType = 'json' } = {}) {
+function requestMusicDlCatalog(baseUrl, route, { maxBytes = MAX_CATALOG_JSON_BYTES, timeout = 20000, responseType = 'json', requestClient = http } = {}) {
   return new Promise((resolve, reject) => {
     const normalized = normalizeMusicDlBaseUrl(baseUrl);
     if (!normalized) { reject(Error('invalid_catalog_url')); return; }
     const base = new URL(normalized);
-    const connectHost = base.hostname === '[::1]' || base.hostname === '::1' ? '::1' : '127.0.0.1';
+    const connectHost = base.hostname.replace(/^\[|\]$/g, '');
+    const family = net.isIP(connectHost) || undefined;
     const requestPath = `${base.pathname}${route.startsWith('/') ? route : `/${route}`}`;
     let settled = false, timer;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true; clearTimeout(timer); callback(value);
     };
-    const request = http.request({
-      protocol: 'http:', hostname: connectHost, family: connectHost === '::1' ? 6 : 4, port: base.port || 80,
+    const request = requestClient.request({
+      protocol: 'http:', hostname: connectHost, ...(family ? { family } : {}), port: base.port || 80,
       path: requestPath, method: 'GET',
       headers: { Host: base.host, Accept: responseType === 'json' ? 'application/json' : 'audio/*,application/octet-stream;q=0.5', 'User-Agent': 'Dynamic-Panel/1.1' },
     }, (response) => {
@@ -348,7 +366,9 @@ function requestLoopbackCatalog(baseUrl, route, { maxBytes = MAX_CATALOG_JSON_BY
   });
 }
 
-function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID, lookup, download = downloadRemoteAudio, catalogRequest = requestLoopbackCatalog } = {}) {
+const requestLoopbackCatalog = requestMusicDlCatalog;
+
+function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID, lookup, download = downloadRemoteAudio, catalogRequest = requestMusicDlCatalog } = {}) {
   function read() {
     try {
       const stored = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -858,5 +878,6 @@ function createMusicLibrary({ filePath, now = Date.now, uuid = crypto.randomUUID
 
 module.exports = {
   AUDIO_EXTENSIONS, MAX_AUDIO_BYTES, MAX_FOLDER_ENTRIES, MAX_CATALOG_PLAYLISTS, MAX_CATALOG_TRACKS,
-  BUILTIN_SOURCE_ID, createMusicLibrary, normalizeLibrary, normalizeMusicDlBaseUrl, requestLoopbackCatalog, resolvePublicAudioUrl,
+  BUILTIN_SOURCE_ID, createMusicLibrary, normalizeLibrary, normalizeMusicDlBaseUrl,
+  requestMusicDlCatalog, requestLoopbackCatalog, resolvePublicAudioUrl,
 };
